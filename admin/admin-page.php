@@ -60,7 +60,7 @@ if (isset($_POST['ahx_github_dir_submit'])) {
     <h2>Erfasste Verzeichnisse</h2>
     <table class="widefat">
         <thead>
-            <tr><th>ID</th><th>Name</th><th>Typ</th><th>Verzeichnis</th><th>Erfasst am</th><th>Änderungen</th><th></th></tr>
+            <tr><th>ID</th><th>Name</th><th>Typ</th><th>Remote / Verzeichnis</th><th>Erfasst am</th><th>Änderungen</th><th></th></tr>
         </thead>
         <tbody>
         <?php
@@ -73,14 +73,32 @@ if (isset($_POST['ahx_github_dir_submit'])) {
                 $changes_url = admin_url('admin.php?page=ahx-wp-github&repo_changes=1&dir=' . urlencode($row->dir_path));
                 $git_dir = $row->dir_path . DIRECTORY_SEPARATOR . '.git';
                 $btn_changes = '';
+                $remote_display = '';
                 if (is_dir($git_dir)) {
                     $status = shell_exec('cd "' . $row->dir_path . '" && git status --porcelain');
                     $lines = array_filter(explode("\n", (string) $status));
                     $count = count($lines);
                     if ($count > 0) {
                         $btn_changes = '<a href="' . esc_url($changes_url) . '" class="button" title="Änderungsdetails anzeigen">' . $count . ' Änderung' . ($count > 1 ? 'en' : '') . '</a>';
-                    } else {
-                        $btn_changes = '';
+                    }
+
+                    // detect remotes (git remote -v) and collect unique URLs
+                    $remotes_raw = trim((string) shell_exec('cd "' . $row->dir_path . '" && git remote -v 2>&1'));
+                    if ($remotes_raw !== '') {
+                        $urls = [];
+                        $rlines = preg_split('/\r?\n/', $remotes_raw);
+                        foreach ($rlines as $rline) {
+                            if (preg_match('/^\S+\s+(\S+)\s+\((fetch|push)\)/', $rline, $m)) {
+                                $urls[$m[1]] = true;
+                            }
+                        }
+                        if (!empty($urls)) {
+                            $uarr = array_keys($urls);
+                            // show full URL(s), each on its own line
+                            $lines_out = [];
+                            foreach ($uarr as $uu) { $lines_out[] = esc_html($uu); }
+                            $remote_display = '<div style="font-size:12px;color:#333;">' . implode('<br>', $lines_out) . '</div>';
+                        }
                     }
                 } else {
                     $btn_changes = '';
@@ -89,7 +107,7 @@ if (isset($_POST['ahx_github_dir_submit'])) {
                 echo '<td>' . esc_html($row->id) . '</td>';
                 echo '<td>' . esc_html($row->name) . '</td>';
                 echo '<td>' . esc_html($row->type) . '</td>';
-                echo '<td>' . esc_html(preg_replace('/[\\\\\/]+/', DIRECTORY_SEPARATOR, $row->dir_path)) . '</td>';
+                echo '<td>' . ($remote_display !== '' ? $remote_display : '-') . '<div style="color:#666;font-size:12px;margin-top:4px;">' . esc_html(preg_replace('/[\\\\\/]+/', DIRECTORY_SEPARATOR, $row->dir_path)) . '</div></td>';
                 echo '<td>' . esc_html($row->created_at) . '</td>';
                 echo '<td><div style="display:inline-flex;gap:5px;align-items:center">' . $btn_changes . '<a href="' . esc_url($details_url) . '" class="button">Details</a></div></td>';
                 echo '</tr>';
