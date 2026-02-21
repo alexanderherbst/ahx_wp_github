@@ -23,6 +23,63 @@ if (!class_exists('AHX_Logging') && file_exists(WP_CONTENT_DIR . '/plugins/ahx_w
 }
 $logger = class_exists('AHX_Logging') ? AHX_Logging::get_instance() : null;
 
+// Helper: run command with timeout and capture output (prevents interactive prompts)
+function ahx_run_command_with_timeout($cmd, $timeout = 30, $cwd = null) {
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w']
+    ];
+    $pipes = [];
+    $proc = proc_open($cmd, $descriptors, $pipes, $cwd);
+    if (!is_resource($proc)) {
+        return ['success' => false, 'output' => '', 'error' => 'proc_open failed', 'timed_out' => false, 'exit_code' => -1];
+    }
+    // close stdin to avoid prompts
+    fclose($pipes[0]);
+
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    $stdout = '';
+    $stderr = '';
+    $start = microtime(true);
+    $timed_out = false;
+
+    while (true) {
+        $read = [$pipes[1], $pipes[2]];
+        $write = null;
+        $except = null;
+        $tv_sec = 0;
+        $tv_usec = 200000; // 200ms
+        $num = @stream_select($read, $write, $except, $tv_sec, $tv_usec);
+        if ($num === false) break;
+        foreach ($read as $r) {
+            $data = stream_get_contents($r);
+            if ($r === $pipes[1]) $stdout .= $data;
+            else $stderr .= $data;
+        }
+        $status = proc_get_status($proc);
+        if (!$status['running']) break;
+        if ((microtime(true) - $start) > $timeout) {
+            // timeout: terminate
+            $timed_out = true;
+            proc_terminate($proc);
+            break;
+        }
+    }
+
+    // read remaining
+    $stdout .= stream_get_contents($pipes[1]);
+    $stderr .= stream_get_contents($pipes[2]);
+
+    foreach ($pipes as $p) { if (is_resource($p)) fclose($p); }
+
+    $exit_code = proc_close($proc);
+    $success = !$timed_out && ($exit_code === 0);
+    return ['success' => $success, 'output' => $stdout, 'error' => $stderr, 'timed_out' => $timed_out, 'exit_code' => $exit_code];
+}
+
 // Änderungen auslesen
 $changes = shell_exec('cd "' . $dir . '" && git status --porcelain');
 $changes = trim($changes);
@@ -244,7 +301,16 @@ if (isset($_POST['commit_action'])) {
         $commit_and_submit = isset($_POST['commit_and_submit']) && $_POST['commit_and_submit'] === '1';
 
         shell_exec('cd "' . $dir . '" && git add .');
-        $commit_out = shell_exec('cd "' . $dir . '" && git commit -m ' . escapeshellarg($commit_msg) . ' 2>&1');
+        $commit_cmd = 'cd "' . $dir . '" && git commit -m ' . escapeshellarg($commit_msg) . ' 2>&1';
+        $commit_res = ahx_run_command_with_timeout($commit_cmd, 15, null);
+        if ($logger) $logger->log_info('git commit output for ' . $dir . ': ' . $commit_res['output'] . ' / ' . $commit_res['error'], 'ahx_wp_github');
+        if (!$commit_res['success']) {
+            ahx_wp_main_add_notice('Commit fehlgeschlagen (siehe Log).', 'error');
+            if ($commit_res['timed_out']) ahx_wp_main_add_notice('Commit abgebrochen: Timeout erreicht.', 'error');
+            $admin_url = admin_url('admin.php?page=ahx-wp-github');
+            if (!headers_sent()) { header('Location: ' . $admin_url); exit; }
+            else { echo '<script>window.location.href = ' . json_encode($admin_url) . ';</script>'; exit; }
+        }
 
         ahx_wp_main_add_notice('Commit erfolgreich durchgeführt. Neue Version: ' . esc_html($new_version), 'success');
 
@@ -266,10 +332,11 @@ if (isset($_POST['commit_action'])) {
                     if ($logger) $logger->log_error('Push failed (no branch) for ' . $dir, 'ahx_wp_github');
                 } else {
                     $push_cmd = 'cd "' . $dir . '" && git push -u ' . escapeshellarg($push_remote) . ' ' . escapeshellarg($branch) . ' 2>&1';
-                    $push_out = shell_exec($push_cmd);
-                    if ($logger) $logger->log_info('git push output for ' . $dir . ' to ' . $push_remote . '/' . $branch . ': ' . $push_out, 'ahx_wp_github');
-                    if (stripos($push_out, 'error') !== false || stripos($push_out, 'fatal') !== false) {
+                    $push_res = ahx_run_command_with_timeout($push_cmd, 60, null);
+                    if ($logger) $logger->log_info('git push output for ' . $dir . ' to ' . $push_remote . '/' . $branch . ': ' . $push_res['output'] . ' / ' . $push_res['error'], 'ahx_wp_github');
+                    if ($push_res['timed_out'] || !$push_res['success'] || stripos($push_res['output'] . $push_res['error'], 'fatal') !== false || stripos($push_res['output'] . $push_res['error'], 'error') !== false) {
                         ahx_wp_main_add_notice('Push fehlgeschlagen (siehe Log).', 'error');
+                        if ($push_res['timed_out']) ahx_wp_main_add_notice('Push abgebrochen: Timeout erreicht.', 'error');
                     } else {
                         ahx_wp_main_add_notice('Push erfolgreich: ' . esc_html($push_remote) . '/' . esc_html($branch), 'success');
                     }
