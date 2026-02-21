@@ -17,6 +17,12 @@ if (!is_dir($git_dir)) {
 
 ahx_wp_main_display_admin_notices();
 
+// Load logging helper (if available) for secure logging of git push output
+if (!class_exists('AHX_Logging') && file_exists(WP_CONTENT_DIR . '/plugins/ahx_wp_main/helper/logging.php')) {
+    require_once WP_CONTENT_DIR . '/plugins/ahx_wp_main/helper/logging.php';
+}
+$logger = class_exists('AHX_Logging') ? AHX_Logging::get_instance() : null;
+
 // Änderungen auslesen
 $changes = shell_exec('cd "' . $dir . '" && git status --porcelain');
 $changes = trim($changes);
@@ -234,9 +240,43 @@ if (isset($_POST['commit_action'])) {
         $version_txt = $dir . DIRECTORY_SEPARATOR . 'version.txt';
         if (file_exists($version_txt)) file_put_contents($version_txt, $new_version . "\n");
 
+        // prepare push option
+        $commit_and_submit = isset($_POST['commit_and_submit']) && $_POST['commit_and_submit'] === '1';
+
         shell_exec('cd "' . $dir . '" && git add .');
-        shell_exec('cd "' . $dir . '" && git commit -m ' . escapeshellarg($commit_msg));
+        $commit_out = shell_exec('cd "' . $dir . '" && git commit -m ' . escapeshellarg($commit_msg) . ' 2>&1');
+
         ahx_wp_main_add_notice('Commit erfolgreich durchgeführt. Neue Version: ' . esc_html($new_version), 'success');
+
+        if ($commit_and_submit) {
+            // determine push remote
+            $remotes = trim((string) shell_exec('cd "' . $dir . '" && git remote 2>&1'));
+            $push_remote = 'origin';
+            if ($remotes === '') {
+                ahx_wp_main_add_notice('Push fehlgeschlagen: Kein Remote konfiguriert.', 'error');
+                if ($logger) $logger->log_error('Push failed: no remotes for ' . $dir, 'ahx_wp_github');
+            } else {
+                $rem_list = preg_split('/\s+/', $remotes, -1, PREG_SPLIT_NO_EMPTY);
+                if (!in_array($push_remote, $rem_list, true)) {
+                    $push_remote = $rem_list[0];
+                }
+                $branch = trim(shell_exec('cd "' . $dir . '" && git rev-parse --abbrev-ref HEAD 2>&1'));
+                if ($branch === '' || strpos($branch, 'fatal:') === 0) {
+                    ahx_wp_main_add_notice('Push fehlgeschlagen: aktueller Branch konnte nicht ermittelt werden.', 'error');
+                    if ($logger) $logger->log_error('Push failed (no branch) for ' . $dir, 'ahx_wp_github');
+                } else {
+                    $push_cmd = 'cd "' . $dir . '" && git push -u ' . escapeshellarg($push_remote) . ' ' . escapeshellarg($branch) . ' 2>&1';
+                    $push_out = shell_exec($push_cmd);
+                    if ($logger) $logger->log_info('git push output for ' . $dir . ' to ' . $push_remote . '/' . $branch . ': ' . $push_out, 'ahx_wp_github');
+                    if (stripos($push_out, 'error') !== false || stripos($push_out, 'fatal') !== false) {
+                        ahx_wp_main_add_notice('Push fehlgeschlagen (siehe Log).', 'error');
+                    } else {
+                        ahx_wp_main_add_notice('Push erfolgreich: ' . esc_html($push_remote) . '/' . esc_html($branch), 'success');
+                    }
+                }
+            }
+        }
+
         $admin_url = admin_url('admin.php?page=ahx-wp-github');
         if (!headers_sent()) { header('Location: ' . $admin_url); exit; }
         else { echo '<script>window.location.href = ' . json_encode($admin_url) . ';</script>'; exit; }
@@ -311,6 +351,7 @@ if (isset($_POST['commit_action'])) {
                 <label style="margin-left:16px;"><input type="radio" name="version_bump" value="minor"> Minor (<?php echo esc_html($header_version_disp . ' ⇒ ' . $v_minor); ?>)</label>
                 <label style="margin-left:16px;"><input type="radio" name="version_bump" value="major"> Major (<?php echo esc_html($header_version_disp . ' ⇒ ' . $v_major); ?>)</label>
             </fieldset>
+            <label style="display:inline-block;margin-right:12px;"><input type="checkbox" name="commit_and_submit" value="1"> Commit + Submit (push)</label>
             <button type="submit" name="commit_action" class="button button-primary">Commit ausführen</button>
         </form>
     <?php endif; ?>
