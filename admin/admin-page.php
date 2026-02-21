@@ -72,27 +72,26 @@ if (isset($_POST['ahx_github_dir_submit'])) {
                 $details_url = admin_url('admin.php?page=ahx-wp-github&repo_details=1&dir=' . urlencode($row->dir_path));
                 $changes_url = admin_url('admin.php?page=ahx-wp-github&repo_changes=1&dir=' . urlencode($row->dir_path));
                 $git_dir = $row->dir_path . DIRECTORY_SEPARATOR . '.git';
-                $num_changes = '';
+                $btn_changes = '';
                 if (is_dir($git_dir)) {
                     $status = shell_exec('cd "' . $row->dir_path . '" && git status --porcelain');
                     $lines = array_filter(explode("\n", (string) $status));
                     $count = count($lines);
                     if ($count > 0) {
-                        $num_changes = '<a href="' . esc_url($changes_url) . '" class="button button-small" title="Details anzeigen">' . $count . ' Änderung' . ($count > 1 ? 'en' : '') . '</a>';
+                        $btn_changes = '<a href="' . esc_url($changes_url) . '" class="button" title="Änderungsdetails anzeigen">' . $count . ' Änderung' . ($count > 1 ? 'en' : '') . '</a>';
                     } else {
-                        $num_changes = '0';
+                        $btn_changes = '';
                     }
                 } else {
-                    $num_changes = '-';
+                    $btn_changes = '';
                 }
                 echo '<tr>';
                 echo '<td>' . esc_html($row->id) . '</td>';
                 echo '<td>' . esc_html($row->name) . '</td>';
                 echo '<td>' . esc_html($row->type) . '</td>';
-                echo '<td>' . esc_html($row->dir_path) . '</td>';
+                echo '<td>' . esc_html(preg_replace('/[\\\\\/]+/', DIRECTORY_SEPARATOR, $row->dir_path)) . '</td>';
                 echo '<td>' . esc_html($row->created_at) . '</td>';
-                echo '<td style="text-align:center">' . $num_changes . '</td>';
-                echo '<td><a href="' . esc_url($details_url) . '" class="button">Details</a></td>';
+                echo '<td><div style="display:inline-flex;gap:5px;align-items:center">' . $btn_changes . '<a href="' . esc_url($details_url) . '" class="button">Details</a></div></td>';
                 echo '</tr>';
             }
         } else {
