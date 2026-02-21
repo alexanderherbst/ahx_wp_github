@@ -10,6 +10,13 @@ if (isset($_GET['repo_changes']) && $_GET['repo_changes'] == 1 && isset($_GET['d
     return;
 }
 
+// Details-Ansicht einbinden, falls gewünscht, und sofort beenden (frühzeitig,
+// bevor Seiteninhalt ausgegeben wird)
+if (isset($_GET['repo_details']) && $_GET['repo_details'] == 1 && isset($_GET['dir'])) {
+    require_once plugin_dir_path(__FILE__) . 'repo-details.php';
+    return;
+}
+
 // Verzeichnis erfassen
 if (isset($_POST['ahx_github_dir_submit'])) {
     $dir = sanitize_text_field($_POST['ahx_github_dir'] ?? '');
@@ -120,15 +127,4 @@ if (isset($_POST['ahx_github_dir_submit'])) {
     </table>
 
 <?php
-// Details-Ansicht einbinden, falls gewünscht
-if (isset($_GET['repo_details']) && $_GET['repo_details'] == 1 && isset($_GET['dir'])) {
-    require_once plugin_dir_path(__FILE__) . 'repo-details.php';
-}
-// Änderungen-Ansicht einbinden, falls gewünscht
-if (isset($_GET['repo_changes']) && $_GET['repo_changes'] == 1 && isset($_GET['dir'])) {
-    require_once plugin_dir_path(__FILE__) . 'repo-changes.php';
-    return;
-}
-else {
-    echo "</div>";
-}
+echo "</div>";
