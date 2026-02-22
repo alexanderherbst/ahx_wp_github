@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.0.5
+Version: v1.1.0
 Author: AHX
 */
 
@@ -44,9 +44,22 @@ function ahx_wp_github_install() {
 add_action('admin_menu', 'ahx_wp_github_admin_menu');
 function ahx_wp_github_admin_menu() {
     add_menu_page('AHX WP GitHub', 'AHX WP GitHub', 'manage_options', 'ahx-wp-github', 'ahx_wp_github_admin_page');
+    add_options_page(
+        'AHX GitHub', 
+        'AHX GitHub', 
+        'manage_options', 
+        'ahx-wp-github-config', 
+        'ahx_wp_github_settings_page'
+    );
 }
+
+// Ensure settings are registered during admin_init (needed for options.php save requests)
+require_once plugin_dir_path(__FILE__) . 'admin/settings.php';
 
 // Admin-Seite anzeigen
 function ahx_wp_github_admin_page() {
     require_once plugin_dir_path(__FILE__) . 'admin/admin-page.php';
+}
+function ahx_wp_github_settings_page() {
+    require_once plugin_dir_path(__FILE__) . 'admin/config-page.php';
 }
