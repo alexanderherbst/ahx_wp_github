@@ -90,7 +90,7 @@ $selected_repo_id = 0;
 if (isset($_POST['ahx_run_diagnostics'])) {
     check_admin_referer('ahx_wp_github_run_diagnostics');
 
-    $selected_repo_id = intval($_POST['repo_id'] ?? 0);
+    $selected_repo_id = intval(wp_unslash($_POST['repo_id'] ?? 0));
     $selected_repo = null;
     foreach ($repos as $repo) {
         if (intval($repo->id) === $selected_repo_id) {

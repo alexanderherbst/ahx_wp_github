@@ -186,12 +186,13 @@ if (isset($_POST['ahx_github_dir_submit'])) {
 
 // Handle one-click sync from list view
 if (isset($_POST['ahx_repo_sync_submit']) && current_user_can('manage_options')) {
-    if (!isset($_POST['ahx_repo_sync_nonce']) || !wp_verify_nonce($_POST['ahx_repo_sync_nonce'], 'ahx_repo_sync')) {
+    $sync_nonce = sanitize_text_field(wp_unslash($_POST['ahx_repo_sync_nonce'] ?? ''));
+    if ($sync_nonce === '' || !wp_verify_nonce($sync_nonce, 'ahx_repo_sync')) {
         echo '<div class="error"><p>Ungültiger Nonce.</p></div>';
     } else {
         global $wpdb;
         $table = $wpdb->prefix . 'ahx_wp_github';
-        $repo_id = intval($_POST['repo_id'] ?? 0);
+        $repo_id = intval(wp_unslash($_POST['repo_id'] ?? 0));
         $repo = $wpdb->get_row($wpdb->prepare("SELECT id, name, dir_path FROM $table WHERE id = %d", $repo_id));
 
         if (!$repo || !is_dir($repo->dir_path) || !is_dir($repo->dir_path . DIRECTORY_SEPARATOR . '.git')) {

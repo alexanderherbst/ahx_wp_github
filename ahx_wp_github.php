@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.7.3
+Version: v1.7.4
 Author: AHX
 */
 
@@ -132,22 +132,24 @@ function ahx_wp_github_ajax_commit() {
     if (!current_user_can('manage_options')) {
         wp_send_json_error('Keine Berechtigung');
     }
-    ahx_wp_github_safe_log('DEBUG', 'ajax_commit: incoming request dir=' . var_export($_POST['dir'] ?? '', true));
-    $nonce = $_POST['nonce'] ?? '';
+    $request_dir_raw = wp_unslash($_POST['dir'] ?? '');
+    ahx_wp_github_safe_log('DEBUG', 'ajax_commit: incoming request dir=' . var_export($request_dir_raw, true));
+    $nonce = sanitize_text_field(wp_unslash($_POST['nonce'] ?? ''));
     if (!wp_verify_nonce($nonce, 'ahx_repo_commit')) {
         wp_send_json_error('Ungültiger Nonce');
     }
 
-    $dir = $_POST['dir'] ?? '';
+    $dir = ahx_wp_github_normalize_dir_path(sanitize_text_field((string)$request_dir_raw));
     if (!$dir || !is_dir($dir)) {
         wp_send_json_error('Ungültiges Verzeichnis');
     }
     // Use internal shared handler to perform commit/push without remote HTTP request
     require_once plugin_dir_path(__FILE__) . 'admin/commit-handler.php';
     $post_body = [
-        'commit_action' => $_POST['commit_action'] ?? 'commit_sync',
-        'commit_message' => $_POST['commit_message'] ?? '',
-        'version_bump' => $_POST['version_bump'] ?? 'none',
+        'commit_action' => sanitize_text_field(wp_unslash($_POST['commit_action'] ?? 'commit_sync')),
+        'commit_message' => sanitize_textarea_field(wp_unslash($_POST['commit_message'] ?? '')),
+        'version_bump' => sanitize_key(wp_unslash($_POST['version_bump'] ?? 'none')),
+        'allow_force_with_lease_on_rebase_conflict' => sanitize_text_field(wp_unslash($_POST['allow_force_with_lease_on_rebase_conflict'] ?? '')),
         'ajax' => '1'
     ];
     $res = ahx_wp_github_process_commit_request($dir, $post_body);
@@ -215,13 +217,13 @@ function ahx_wp_github_ajax_browse_dirs() {
         wp_send_json_error('Keine Berechtigung');
     }
 
-    $nonce = $_POST['nonce'] ?? '';
+    $nonce = sanitize_text_field(wp_unslash($_POST['nonce'] ?? ''));
     if (!wp_verify_nonce($nonce, 'ahx_repo_browse')) {
         wp_send_json_error('Ungültiger Nonce');
     }
 
     $roots = ahx_wp_github_get_browse_roots();
-    $requested = isset($_POST['path']) ? wp_unslash($_POST['path']) : '';
+    $requested = sanitize_text_field(wp_unslash($_POST['path'] ?? ''));
     $path = ahx_wp_github_normalize_dir_path($requested);
 
     if ($path === '') {

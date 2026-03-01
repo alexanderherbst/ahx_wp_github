@@ -51,9 +51,9 @@ global $wpdb;
 $table = $wpdb->prefix . 'ahx_wp_github';
 $repos = $wpdb->get_results("SELECT id, name, dir_path FROM $table ORDER BY name ASC");
 
-$selected_repo_id = intval($_POST['repo_id'] ?? ($_GET['repo_id'] ?? 0));
-$feature_branch = sanitize_text_field($_POST['feature_branch'] ?? '');
-$branch_title = sanitize_text_field($_POST['branch_title'] ?? '');
+$selected_repo_id = intval(wp_unslash($_POST['repo_id'] ?? ($_GET['repo_id'] ?? 0)));
+$feature_branch = sanitize_text_field(wp_unslash($_POST['feature_branch'] ?? ''));
+$branch_title = sanitize_text_field(wp_unslash($_POST['branch_title'] ?? ''));
 $messages = [];
 $results = [];
 $repo = null;
@@ -113,7 +113,7 @@ if ($repo && is_dir($repo->dir_path) && is_dir($repo->dir_path . DIRECTORY_SEPAR
 
 if (isset($_POST['ahx_wizard_action'])) {
     check_admin_referer('ahx_wp_github_workflow_wizard');
-    $action = sanitize_key($_POST['ahx_wizard_action']);
+    $action = sanitize_key(wp_unslash($_POST['ahx_wizard_action'] ?? ''));
     $before_result_count = count($results);
     $executed_step = 0;
     foreach ($workflow_steps as $step_number => $step_data) {

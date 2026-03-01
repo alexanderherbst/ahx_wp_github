@@ -330,11 +330,13 @@ if (intval($recent_res['exit'] ?? 1) === 0) {
 
 // Commit-Logik: verarbeite POST bevor Ausgabe (delegiert an gemeinsamen Handler)
 if (isset($_POST['commit_action'])) {
+    $ajax_flag = sanitize_text_field(wp_unslash($_POST['ajax'] ?? ''));
+    $is_ajax = ($ajax_flag === '1');
     $commit_nonce = sanitize_text_field(wp_unslash($_POST['ahx_repo_commit_nonce'] ?? ''));
     $commit_nonce_ok = ($commit_nonce !== '' && wp_verify_nonce($commit_nonce, 'ahx_repo_commit_form'));
     if (!$commit_nonce_ok) {
         $error_message = 'Ungültiger Nonce.';
-        if (empty($_POST['ajax']) || $_POST['ajax'] != '1') {
+        if (!$is_ajax) {
             ahx_wp_main_add_notice($error_message, 'error');
             $admin_url = admin_url('admin.php?page=ahx-wp-github');
             if (!headers_sent()) { header('Location: ' . $admin_url); exit; }
@@ -346,12 +348,19 @@ if (isset($_POST['commit_action'])) {
     }
 
     require_once dirname(__DIR__) . '/admin/commit-handler.php';
-    $result = ahx_wp_github_process_commit_request($dir, $_POST);
-    $action = sanitize_text_field($_POST['commit_action'] ?? 'commit');
+    $post_data = [
+        'commit_action' => sanitize_text_field(wp_unslash($_POST['commit_action'] ?? 'commit')),
+        'commit_message' => sanitize_textarea_field(wp_unslash($_POST['commit_message'] ?? '')),
+        'version_bump' => sanitize_key(wp_unslash($_POST['version_bump'] ?? 'none')),
+        'allow_force_with_lease_on_rebase_conflict' => sanitize_text_field(wp_unslash($_POST['allow_force_with_lease_on_rebase_conflict'] ?? '')),
+        'ajax' => $is_ajax ? '1' : '0',
+    ];
+    $result = ahx_wp_github_process_commit_request($dir, $post_data);
+    $action = (string)$post_data['commit_action'];
     $action_label = ($action === 'commit_sync') ? 'Commit+Sync' : 'Commit';
 
     // Add admin notices for non-AJAX requests
-    if (empty($_POST['ajax']) || $_POST['ajax'] != '1') {
+    if (!$is_ajax) {
         if (!empty($result['success'])) {
             ahx_wp_main_add_notice($action_label . ' erfolgreich durchgeführt. Neue Version: ' . esc_html($result['new_version']), 'success');
             if ($action === 'commit_sync' && !empty($result['release_success']) && !empty($result['release_version'])) {

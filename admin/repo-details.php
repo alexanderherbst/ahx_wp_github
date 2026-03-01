@@ -48,13 +48,14 @@ if ($has_git_repo) {
 }
 
 if (isset($_POST['ahx_repo_settings_submit']) && current_user_can('manage_options')) {
-    if (!isset($_POST['ahx_repo_settings_nonce']) || !wp_verify_nonce($_POST['ahx_repo_settings_nonce'], 'ahx_repo_settings')) {
+    $settings_nonce = sanitize_text_field(wp_unslash($_POST['ahx_repo_settings_nonce'] ?? ''));
+    if ($settings_nonce === '' || !wp_verify_nonce($settings_nonce, 'ahx_repo_settings')) {
         ahx_wp_main_add_notice('Ungültiger Nonce.', 'error');
     } elseif (!$repo_row) {
         ahx_wp_main_add_notice('Repository-Eintrag nicht gefunden.', 'error');
     } else {
         $saved_any = false;
-        $reset_identity = isset($_POST['ahx_git_identity_reset']) && $_POST['ahx_git_identity_reset'] === '1';
+        $reset_identity = sanitize_text_field(wp_unslash($_POST['ahx_git_identity_reset'] ?? '')) === '1';
 
         $safe = isset($_POST['safe_directory']) ? 1 : 0;
         $wpdb->update($table, ['safe_directory' => $safe], ['id' => intval($repo_row->id)]);
@@ -128,7 +129,8 @@ if (isset($_POST['ahx_repo_settings_submit']) && current_user_can('manage_option
 }
 
 if (isset($_POST['ahx_repo_branch_action_submit']) && current_user_can('manage_options')) {
-    if (!isset($_POST['ahx_repo_branch_action_nonce']) || !wp_verify_nonce($_POST['ahx_repo_branch_action_nonce'], 'ahx_repo_branch_action')) {
+    $branch_action_nonce = sanitize_text_field(wp_unslash($_POST['ahx_repo_branch_action_nonce'] ?? ''));
+    if ($branch_action_nonce === '' || !wp_verify_nonce($branch_action_nonce, 'ahx_repo_branch_action')) {
         ahx_wp_main_add_notice('Ungültiger Nonce.', 'error');
     } elseif (!$has_git_repo || $git_bin === '') {
         ahx_wp_main_add_notice('Kein Git-Repository gefunden.', 'error');
