@@ -622,6 +622,33 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                         }
                     }
 
+                    // Kein lokales Upstream: prüfen, ob der Remote-Branch bereits existiert.
+                    // Falls ja, vor dem ersten set-upstream Push rebasen, um non-fast-forward zu vermeiden.
+                    if (!$has_upstream && $can_push) {
+                        $remote_branch_res = ahx_run_git_cmd(
+                            $git_for_up,
+                            $dir,
+                            'ls-remote --heads origin ' . escapeshellarg($branch),
+                            25,
+                            true
+                        );
+                        $remote_branch_exists = intval($remote_branch_res['exit'] ?? 1) === 0
+                            && trim((string)($remote_branch_res['output'] ?? '')) !== '';
+                        ahx_wp_github_log_debug('commit_sync remote branch exists=' . ($remote_branch_exists ? '1' : '0') . ' branch=' . $branch);
+
+                        if ($remote_branch_exists) {
+                            $rebase_res = ahx_run_git_cmd($git_for_up, $dir, 'pull --rebase --autostash origin ' . escapeshellarg($branch), 60, true);
+                            $resp['rebase_output'] = $rebase_res['output'] ?? '';
+                            if (intval($rebase_res['exit'] ?? 1) !== 0) {
+                                $resp['push_output'] = $resp['rebase_output'];
+                                $resp['message'] = 'Sync fehlgeschlagen: Rebase mit bestehendem Remote-Branch konnte nicht durchgeführt werden.';
+                                $resp['success'] = false;
+                                $can_push = false;
+                                ahx_wp_github_log_debug('commit_sync rebase failed for existing remote branch; push skipped');
+                            }
+                        }
+                    }
+
                     if ($can_push) {
                         if ($has_upstream) {
                             $push_cmd = 'push --force-with-lease';
@@ -632,7 +659,8 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                         $resp['push_output'] = $res_push['output'] ?? '';
                         $resp['success'] = intval($res_push['exit']) === 0;
                         if (!$resp['success'] && empty($resp['message'])) {
-                            $resp['message'] = 'Push zum Remote fehlgeschlagen.';
+                            $push_excerpt = trim(mb_substr((string)$resp['push_output'], 0, 600));
+                            $resp['message'] = 'Push zum Remote fehlgeschlagen.' . ($push_excerpt !== '' ? ' ' . $push_excerpt : '');
                         }
                     }
                 }
