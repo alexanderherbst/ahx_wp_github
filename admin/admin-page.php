@@ -144,8 +144,11 @@ if (isset($_GET['repo_details']) && $_GET['repo_details'] == 1 && isset($_GET['d
 
 // Verzeichnis erfassen
 if (isset($_POST['ahx_github_dir_submit'])) {
-    $dir = sanitize_text_field($_POST['ahx_github_dir'] ?? '');
-    if ($dir && is_dir($dir)) {
+    if (!isset($_POST['ahx_github_dir_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['ahx_github_dir_nonce'])), 'ahx_github_dir_submit')) {
+        echo '<div class="error"><p>Ungültiger Nonce.</p></div>';
+    } else {
+        $dir = sanitize_text_field(wp_unslash($_POST['ahx_github_dir'] ?? ''));
+        if ($dir && is_dir($dir)) {
         global $wpdb;
         $table = $wpdb->prefix . 'ahx_wp_github';
         // Name des untersten Verzeichnisses ermitteln
@@ -164,19 +167,20 @@ if (isset($_POST['ahx_github_dir_submit'])) {
         }
         // Prüfen, ob Verzeichnis schon existiert
         $exists = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table WHERE dir_path = %s", $dir));
-        if (!$exists) {
-            // Prüfen, ob .git existiert, sonst initialisieren
-            if (!is_dir($dir . DIRECTORY_SEPARATOR . '.git')) {
-                // Git initialisieren
-                ahx_wp_github_admin_run_git($dir, 'init', 20, false);
+            if (!$exists) {
+                // Prüfen, ob .git existiert, sonst initialisieren
+                if (!is_dir($dir . DIRECTORY_SEPARATOR . '.git')) {
+                    // Git initialisieren
+                    ahx_wp_github_admin_run_git($dir, 'init', 20, false);
+                }
+                $wpdb->insert($table, ['name' => $name, 'dir_path' => $dir, 'type' => $type, 'safe_directory' => 0]);
+                echo '<div class="updated"><p>Verzeichnis gespeichert und ggf. als Git-Repo initialisiert.</p></div>';
+            } else {
+                echo '<div class="error"><p>Verzeichnis ist bereits erfasst.</p></div>';
             }
-            $wpdb->insert($table, ['name' => $name, 'dir_path' => $dir, 'type' => $type, 'safe_directory' => 0]);
-            echo '<div class="updated"><p>Verzeichnis gespeichert und ggf. als Git-Repo initialisiert.</p></div>';
         } else {
-            echo '<div class="error"><p>Verzeichnis ist bereits erfasst.</p></div>';
+            echo '<div class="error"><p>Ungültiges Verzeichnis.</p></div>';
         }
-    } else {
-        echo '<div class="error"><p>Ungültiges Verzeichnis.</p></div>';
     }
 }
 
@@ -229,6 +233,7 @@ ahx_wp_main_display_admin_notices();
 <div class="wrap">
     <h1>AHX WP GitHub</h1>
     <form method="post">
+        <?php wp_nonce_field('ahx_github_dir_submit', 'ahx_github_dir_nonce'); ?>
         <label for="ahx_github_dir">Verzeichnis:</label>
         <input type="text" name="ahx_github_dir" id="ahx_github_dir" style="width:400px;" required />
         <button type="button" id="ahx-open-dir-picker" class="button">Auswählen…</button>

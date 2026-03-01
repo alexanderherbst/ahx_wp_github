@@ -3,7 +3,7 @@ if (!current_user_can('manage_options')) {
     wp_die(__('Keine Berechtigung.'));
 }
 
-$dir = isset($_GET['dir']) ? $_GET['dir'] : '';
+$dir = isset($_GET['dir']) ? sanitize_text_field(wp_unslash($_GET['dir'])) : '';
 if (!$dir || !is_dir($dir)) {
     echo '<div class="error"><p>Ungültiges oder nicht vorhandenes Verzeichnis.</p></div>';
     return;
@@ -330,6 +330,21 @@ if (intval($recent_res['exit'] ?? 1) === 0) {
 
 // Commit-Logik: verarbeite POST bevor Ausgabe (delegiert an gemeinsamen Handler)
 if (isset($_POST['commit_action'])) {
+    $commit_nonce = sanitize_text_field(wp_unslash($_POST['ahx_repo_commit_nonce'] ?? ''));
+    $commit_nonce_ok = ($commit_nonce !== '' && wp_verify_nonce($commit_nonce, 'ahx_repo_commit_form'));
+    if (!$commit_nonce_ok) {
+        $error_message = 'Ungültiger Nonce.';
+        if (empty($_POST['ajax']) || $_POST['ajax'] != '1') {
+            ahx_wp_main_add_notice($error_message, 'error');
+            $admin_url = admin_url('admin.php?page=ahx-wp-github');
+            if (!headers_sent()) { header('Location: ' . $admin_url); exit; }
+            else { echo '<script>window.location.href = ' . wp_json_encode($admin_url) . ';</script>'; exit; }
+        }
+        header('Content-Type: application/json');
+        echo wp_json_encode(['success' => false, 'message' => $error_message]);
+        exit;
+    }
+
     require_once dirname(__DIR__) . '/admin/commit-handler.php';
     $result = ahx_wp_github_process_commit_request($dir, $_POST);
     $action = sanitize_text_field($_POST['commit_action'] ?? 'commit');
@@ -376,12 +391,12 @@ if (isset($_POST['commit_action'])) {
         }
         $admin_url = admin_url('admin.php?page=ahx-wp-github');
         if (!headers_sent()) { header('Location: ' . $admin_url); exit; }
-        else { echo '<script>window.location.href = ' . json_encode($admin_url) . ';</script>'; exit; }
+        else { echo '<script>window.location.href = ' . wp_json_encode($admin_url) . ';</script>'; exit; }
     }
 
     // AJAX response
     header('Content-Type: application/json');
-    echo json_encode(array_merge(['success' => !empty($result['success'])], $result));
+    echo wp_json_encode(array_merge(['success' => !empty($result['success'])], $result));
     exit;
 }
 
@@ -444,6 +459,7 @@ if (isset($_POST['commit_action'])) {
     <?php if (!empty($files)) : ?>
         <?php // Commit handling and version variables are precomputed above; nothing to do here. ?>
         <form id="ahx-repo-commit-form" method="post" style="margin-top:24px;">
+            <?php wp_nonce_field('ahx_repo_commit_form', 'ahx_repo_commit_nonce'); ?>
             <label for="commit_message"><strong>Commit-Beschreibung:</strong></label><br>
             <textarea id="commit_message" name="commit_message" rows="3" style="width:100%;max-width:600px;"></textarea><br>
             <fieldset style="margin:12px 0;">
