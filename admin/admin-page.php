@@ -104,6 +104,32 @@ function ahx_wp_github_admin_count_untracked_empty_dirs($dir, $git_timeout = 15)
     return $count;
 }
 
+function ahx_wp_github_admin_get_repo_version($dir, $name = '') {
+    $version_txt = rtrim((string)$dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'version.txt';
+    if (is_file($version_txt) && is_readable($version_txt)) {
+        $txt = @file_get_contents($version_txt);
+        if ($txt !== false) {
+            $ver = trim((string)$txt);
+            if ($ver !== '') {
+                return preg_match('/^v/i', $ver) ? $ver : ('v' . $ver);
+            }
+        }
+    }
+
+    $name = trim((string)$name);
+    if ($name !== '') {
+        $main_file = rtrim((string)$dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $name . '.php';
+        if (is_file($main_file) && is_readable($main_file)) {
+            $header = @file_get_contents($main_file);
+            if ($header !== false && preg_match('/Version:\s*v?(\d+\.\d+\.\d+)/mi', $header, $m)) {
+                return 'v' . $m[1];
+            }
+        }
+    }
+
+    return '—';
+}
+
 // Änderungen-Ansicht einbinden, falls gewünscht, und sofort beenden
 if (isset($_GET['repo_changes']) && $_GET['repo_changes'] == 1 && isset($_GET['dir'])) {
     require_once plugin_dir_path(__FILE__) . 'repo-changes.php';
@@ -211,7 +237,7 @@ ahx_wp_main_display_admin_notices();
     <h2>Erfasste Verzeichnisse</h2>
     <table class="widefat">
         <thead>
-            <tr><th>ID</th><th>Name</th><th>Typ</th><th>Verzeichnis</th><th>Erfasst am</th><th>Änderungen</th></tr>
+            <tr><th>ID</th><th>Name</th><th>Typ</th><th>Version</th><th>Verzeichnis</th><th>Erfasst am</th><th>Änderungen</th></tr>
         </thead>
         <tbody>
         <?php
@@ -222,6 +248,7 @@ ahx_wp_main_display_admin_notices();
             foreach ($rows as $row) {
                 $details_url = admin_url('admin.php?page=ahx-wp-github&repo_details=1&dir=' . urlencode($row->dir_path));
                 $changes_url = admin_url('admin.php?page=ahx-wp-github&repo_changes=1&dir=' . urlencode($row->dir_path));
+                $repo_version = ahx_wp_github_admin_get_repo_version($row->dir_path, $row->name);
                 $git_dir = $row->dir_path . DIRECTORY_SEPARATOR . '.git';
                 $btn_changes = '';
                 if (is_dir($git_dir)) {
@@ -255,13 +282,14 @@ ahx_wp_main_display_admin_notices();
                 echo '<td>' . esc_html($row->id) . '</td>';
                 echo '<td>' . esc_html($row->name) . '</td>';
                 echo '<td>' . esc_html($row->type) . '</td>';
+                echo '<td>' . esc_html($repo_version) . '</td>';
                 echo '<td>' . esc_html(preg_replace('/[\\\\\/]+/', DIRECTORY_SEPARATOR, $row->dir_path)) . '</td>';
                 echo '<td>' . esc_html($row->created_at) . '</td>';
                 echo '<td><div style="display:inline-flex;gap:5px;align-items:center">' . $btn_changes . '<a href="' . esc_url($details_url) . '" class="button">Details</a></div></td>';
                 echo '</tr>';
             }
         } else {
-            echo '<tr><td colspan="6">Keine Einträge gefunden.</td></tr>';
+            echo '<tr><td colspan="7">Keine Einträge gefunden.</td></tr>';
         }
         ?>
         </tbody>
