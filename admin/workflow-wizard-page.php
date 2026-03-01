@@ -287,7 +287,17 @@ $progress_percent = (int) round(($completed_steps / 4) * 100);
 
 <div class="wrap">
     <h1>AHX WP GitHub Workflow-Assistent</h1>
-    <p>Der Assistent führt schrittweise durch den konfliktarmen Workflow: <strong>main aktualisieren → Feature-Branch rebasen → optional mit force-with-lease pushen</strong>.</p>
+    <p>Der Assistent unterstützt einen sicheren, konfliktarmen Ablauf für Feature-Branches: <strong>main aktualisieren → Feature-Branch auf main bringen</strong>.</p>
+    <div class="notice notice-info" style="padding:10px; margin:10px 0 14px 0;">
+        <p><strong>Was passiert hier (einfach erklärt)?</strong></p>
+        <ul style="margin:6px 0 0 18px; list-style:disc;">
+            <li><strong>main</strong> ist die gemeinsame Basis aller Änderungen.</li>
+            <li>Der Assistent bringt zuerst <strong>main</strong> auf den neuesten Stand vom Server.</li>
+            <li>Danach wird dein <strong>Feature-Branch</strong> auf diese aktuelle Basis gesetzt (Rebase).</li>
+            <li>So sinkt das Konfliktrisiko beim späteren Commit/Sync deutlich.</li>
+        </ul>
+        <p style="margin-top:8px;">Hinweis: Commit und Sync führst du anschließend wie gewohnt über die Änderungsseite aus.</p>
+    </div>
 
     <?php foreach ($messages as $msg): ?>
         <div class="<?php echo esc_attr($msg['type']); ?>"><p><?php echo esc_html($msg['text']); ?></p></div>
@@ -324,7 +334,7 @@ $progress_percent = (int) round(($completed_steps / 4) * 100);
                 <th scope="row"><label for="feature_branch">Feature-Branch</label></th>
                 <td>
                     <input type="text" name="feature_branch" id="feature_branch" value="<?php echo esc_attr($feature_branch); ?>" class="regular-text" placeholder="z. B. feature/mein-ticket">
-                    <p class="description">Wird für Schritt 3 und die Empfehlung nach dem Rebase genutzt.</p>
+                    <p class="description">Das ist dein Arbeits-Branch. Auf diesen Branch wird nach Schritt 2 zurückgewechselt und anschließend rebaset.</p>
                 </td>
             </tr>
             <tr>
@@ -341,7 +351,7 @@ $progress_percent = (int) round(($completed_steps / 4) * 100);
             <button type="submit" name="ahx_wizard_action" value="status" class="button">Status aktualisieren</button>
         </p>
 
-        <h2>Schrittweise Ausführung</h2>
+        <h2>Schrittweise Ausführung (empfohlen)</h2>
         <div style="max-width:900px; margin:0 0 12px 0; background:#fff; border:1px solid #ddd; padding:10px;">
             <p style="margin:0 0 8px 0;"><strong>Fortschritt:</strong> <?php echo esc_html((string)$completed_steps); ?> von 4 Kernschritten (<?php echo esc_html((string)$progress_percent); ?>%)</p>
             <div style="height:10px; background:#e6e6e6; border-radius:2px; overflow:hidden;">
@@ -379,7 +389,7 @@ $progress_percent = (int) round(($completed_steps / 4) * 100);
         </table>
         <ol style="margin-left:18px;">
             <li style="margin-bottom:8px;">
-                <strong>Auf main wechseln</strong><br>
+                <strong>Auf main wechseln</strong> (zur gemeinsamen Ausgangsbasis)<br>
                 <?php if (intval($workflow_progress['last_completed_step']) >= 1): ?>
                     <span style="display:inline-block; margin:4px 0; color:#0a7f2e;">Status: Erledigt</span><br>
                 <?php elseif ($next_step_number === 1): ?>
@@ -388,7 +398,7 @@ $progress_percent = (int) round(($completed_steps / 4) * 100);
                 <button type="submit" name="ahx_wizard_action" value="switch_main" class="button button-secondary">Schritt 1 ausführen</button>
             </li>
             <li style="margin-bottom:8px;">
-                <strong>main vom Remote aktualisieren</strong> (<code>pull origin main</code>)<br>
+                <strong>main vom Remote aktualisieren</strong> (holt den neuesten Stand vom Server)<br>
                 <?php if (intval($workflow_progress['last_completed_step']) >= 2): ?>
                     <span style="display:inline-block; margin:4px 0; color:#0a7f2e;">Status: Erledigt</span><br>
                 <?php elseif ($next_step_number === 2): ?>
@@ -397,7 +407,7 @@ $progress_percent = (int) round(($completed_steps / 4) * 100);
                 <button type="submit" name="ahx_wizard_action" value="pull_main" class="button button-secondary">Schritt 2 ausführen</button>
             </li>
             <li style="margin-bottom:8px;">
-                <strong>Zurück auf den Feature-Branch wechseln</strong><br>
+                <strong>Zurück auf den Feature-Branch wechseln</strong> (zurück in deine Arbeitsumgebung)<br>
                 <?php if (intval($workflow_progress['last_completed_step']) >= 3): ?>
                     <span style="display:inline-block; margin:4px 0; color:#0a7f2e;">Status: Erledigt</span><br>
                 <?php elseif ($next_step_number === 3): ?>
@@ -406,21 +416,13 @@ $progress_percent = (int) round(($completed_steps / 4) * 100);
                 <button type="submit" name="ahx_wizard_action" value="switch_feature" class="button button-secondary">Schritt 3 ausführen</button>
             </li>
             <li style="margin-bottom:8px;">
-                <strong>Feature-Branch auf aktuellen main rebasen</strong><br>
+                <strong>Feature-Branch auf aktuellen main rebasen</strong> (deine Änderungen auf neuer Basis anwenden)<br>
                 <?php if (intval($workflow_progress['last_completed_step']) >= 4): ?>
                     <span style="display:inline-block; margin:4px 0; color:#0a7f2e;">Status: Erledigt</span><br>
                 <?php elseif ($next_step_number === 4): ?>
                     <span style="display:inline-block; margin:4px 0; color:#2271b1;">Status: Als nächstes</span><br>
                 <?php endif; ?>
                 <button type="submit" name="ahx_wizard_action" value="rebase_main" class="button button-secondary">Schritt 4 ausführen</button>
-            </li>
-            <li style="margin-bottom:8px;">
-                <strong>Optional: Während langer Arbeit synchronisieren</strong> (<code>fetch origin</code> + <code>rebase origin/main</code>)<br>
-                <button type="submit" name="ahx_wizard_action" value="sync_origin_main" class="button button-secondary">Zwischensync ausführen</button>
-            </li>
-            <li style="margin-bottom:8px;">
-                <strong>Optional: Nach Rebase pushen</strong> (<code>push --force-with-lease</code>)<br>
-                <button type="submit" name="ahx_wizard_action" value="push_force_with_lease" class="button button-primary">Push mit Lease ausführen</button>
             </li>
         </ol>
     </form>
@@ -450,7 +452,7 @@ $progress_percent = (int) round(($completed_steps / 4) * 100);
     <?php endif; ?>
 
     <?php if (!empty($results)): ?>
-        <h2>Letzte Befehlsausgaben</h2>
+        <h2>Technische Details (letzte Befehlsausgaben)</h2>
         <?php foreach ($results as $result): ?>
             <div style="border:1px solid #ddd; background:#fff; padding:10px; margin-bottom:10px;">
                 <p style="margin:0 0 6px 0;"><strong>Exit-Code:</strong> <?php echo esc_html((string)$result['exit']); ?></p>
