@@ -361,6 +361,173 @@ function ahx_prepare_empty_dirs_for_git($git_bin, $dir, $timeout = 20) {
     return $created;
 }
 
+function ahx_wp_github_parse_owner_repo($remote_url) {
+    $remote_url = trim((string)$remote_url);
+    if ($remote_url === '') {
+        return ['', ''];
+    }
+
+    if (preg_match('#github\.com[:/](.+?)(?:\.git)?$#', $remote_url, $m)) {
+        $owner_repo = trim((string)$m[1], '/');
+        $parts = explode('/', $owner_repo, 2);
+        $owner = trim((string)($parts[0] ?? ''));
+        $repo = trim((string)($parts[1] ?? ''));
+        return [$owner, $repo];
+    }
+
+    return ['', ''];
+}
+
+function ahx_wp_github_normalize_version_tag($tag) {
+    $tag = trim((string)$tag);
+    if ($tag === '') {
+        return '';
+    }
+
+    if (!preg_match('/^v?(\d+)\.(\d+)\.(\d+)$/i', $tag, $m)) {
+        return '';
+    }
+
+    return 'v' . intval($m[1]) . '.' . intval($m[2]) . '.' . intval($m[3]);
+}
+
+function ahx_wp_github_compare_version_tags($tag_a, $tag_b) {
+    $a = ahx_wp_github_normalize_version_tag($tag_a);
+    $b = ahx_wp_github_normalize_version_tag($tag_b);
+
+    if ($a === '' && $b === '') {
+        return 0;
+    }
+    if ($a === '') {
+        return -1;
+    }
+    if ($b === '') {
+        return 1;
+    }
+
+    preg_match('/^v(\d+)\.(\d+)\.(\d+)$/i', $a, $ma);
+    preg_match('/^v(\d+)\.(\d+)\.(\d+)$/i', $b, $mb);
+
+    $va = [intval($ma[1] ?? 0), intval($ma[2] ?? 0), intval($ma[3] ?? 0)];
+    $vb = [intval($mb[1] ?? 0), intval($mb[2] ?? 0), intval($mb[3] ?? 0)];
+
+    for ($i = 0; $i < 3; $i++) {
+        if ($va[$i] < $vb[$i]) return -1;
+        if ($va[$i] > $vb[$i]) return 1;
+    }
+    return 0;
+}
+
+function ahx_wp_github_ensure_release_for_version($remote_url, $branch, $requested_version) {
+    $result = [
+        'success' => false,
+        'created' => false,
+        'exists' => false,
+        'version' => '',
+        'output' => '',
+    ];
+
+    $token = trim((string)get_option('ahx_wp_main_github_token', ''));
+    if ($token === '') {
+        $result['output'] = 'GitHub-Token fehlt: Release kann nicht erstellt werden.';
+        return $result;
+    }
+
+    list($owner, $repo) = ahx_wp_github_parse_owner_repo($remote_url);
+    if ($owner === '' || $repo === '') {
+        $result['output'] = 'Remote-URL konnte nicht als GitHub owner/repo erkannt werden.';
+        return $result;
+    }
+
+    $version = ahx_wp_github_normalize_version_tag($requested_version);
+    if ($version === '') {
+        $result['output'] = 'Ungültige Version für Release: ' . (string)$requested_version;
+        return $result;
+    }
+
+    $api_base = 'https://api.github.com/repos/' . rawurlencode($owner) . '/' . rawurlencode($repo);
+    $headers = [
+        'Authorization' => 'Bearer ' . $token,
+        'User-Agent' => 'AHX WP GitHub',
+        'Accept' => 'application/vnd.github+json',
+    ];
+
+    $tags_url = $api_base . '/tags?per_page=100';
+    $tags_res = wp_remote_get($tags_url, ['headers' => $headers, 'timeout' => 25]);
+    if (!is_wp_error($tags_res) && intval(wp_remote_retrieve_response_code($tags_res)) === 200) {
+        $tags_body = json_decode((string)wp_remote_retrieve_body($tags_res), true);
+        if (is_array($tags_body)) {
+            foreach ($tags_body as $tag_entry) {
+                $tag_name = ahx_wp_github_normalize_version_tag($tag_entry['name'] ?? '');
+                if ($tag_name === '') {
+                    continue;
+                }
+                if (ahx_wp_github_compare_version_tags($tag_name, $version) > 0) {
+                    $version = $tag_name;
+                }
+            }
+        }
+    }
+
+    $result['version'] = $version;
+
+    $release_get_url = $api_base . '/releases/tags/' . rawurlencode($version);
+    $release_get_res = wp_remote_get($release_get_url, ['headers' => $headers, 'timeout' => 25]);
+    if (!is_wp_error($release_get_res) && intval(wp_remote_retrieve_response_code($release_get_res)) === 200) {
+        $result['success'] = true;
+        $result['exists'] = true;
+        $result['output'] = 'Release existiert bereits für ' . $version . '.';
+        return $result;
+    }
+
+    $branch = trim((string)$branch);
+    if ($branch === '' || $branch === 'HEAD') {
+        $branch = 'main';
+    }
+
+    $create_payload = [
+        'tag_name' => $version,
+        'target_commitish' => $branch,
+        'name' => $version,
+        'body' => 'Automatisch erstellt durch AHX WP GitHub.',
+        'draft' => false,
+        'prerelease' => false,
+        'generate_release_notes' => false,
+    ];
+
+    $create_url = $api_base . '/releases';
+    $create_res = wp_remote_post($create_url, [
+        'headers' => array_merge($headers, ['Content-Type' => 'application/json']),
+        'body' => wp_json_encode($create_payload),
+        'timeout' => 30,
+    ]);
+
+    if (is_wp_error($create_res)) {
+        $result['output'] = 'Release-Erstellung fehlgeschlagen: ' . $create_res->get_error_message();
+        return $result;
+    }
+
+    $create_code = intval(wp_remote_retrieve_response_code($create_res));
+    $create_body = (string)wp_remote_retrieve_body($create_res);
+
+    if ($create_code >= 200 && $create_code < 300) {
+        $result['success'] = true;
+        $result['created'] = true;
+        $result['output'] = 'Release erstellt: ' . $version;
+        return $result;
+    }
+
+    if ($create_code === 422 && stripos($create_body, 'already_exists') !== false) {
+        $result['success'] = true;
+        $result['exists'] = true;
+        $result['output'] = 'Release existiert bereits für ' . $version . '.';
+        return $result;
+    }
+
+    $result['output'] = 'Release-Erstellung fehlgeschlagen (HTTP ' . $create_code . '): ' . mb_substr($create_body, 0, 1000);
+    return $result;
+}
+
 // Minimal GitHub API helpers (used by AJAX handler)
 function ahx_github_api_put_file($api_base, $path, $branch, $message, $headers, $dir) {
     $out = '';
@@ -427,17 +594,9 @@ function ahx_github_api_push($dir, $remote_url, $branch, $files, $commit_msg, $t
     $out = '';
     $exit = 0;
     $per_file = [];
-    $owner_repo = '';
-    if (preg_match('#github\.com[:/](.+?)(?:\.git)?$#', $remote_url, $m)) {
-        $owner_repo = trim($m[1], '/');
-    }
-    if ($owner_repo === '') {
-        $out .= "Could not parse owner/repo from remote URL: {$remote_url}\n";
-        return ['exit' => 2, 'output' => $out];
-    }
-    list($owner, $repo) = array_pad(explode('/', $owner_repo, 2), 2, '');
+    list($owner, $repo) = ahx_wp_github_parse_owner_repo($remote_url);
     if ($owner === '' || $repo === '') {
-        $out .= "Invalid owner/repo parsed: {$owner_repo}\n";
+        $out .= "Could not parse owner/repo from remote URL: {$remote_url}\n";
         return ['exit' => 2, 'output' => $out];
     }
     $api_base = "https://api.github.com/repos/{$owner}/{$repo}/contents/";
@@ -486,6 +645,8 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
 
     $commit_msg = trim($post_data['commit_message'] ?? '');
     $action = $post_data['commit_action'] ?? 'commit';
+    $remote_url = '';
+    $branch = '';
     $allow_force_with_lease_on_rebase_conflict = !empty($post_data['allow_force_with_lease_on_rebase_conflict'])
         && in_array((string)$post_data['allow_force_with_lease_on_rebase_conflict'], ['1', 'true', 'on', 'yes'], true);
     ahx_wp_github_log_debug('commit.request option allow_force_with_lease_on_rebase_conflict=' . ($allow_force_with_lease_on_rebase_conflict ? '1' : '0'));
@@ -768,6 +929,27 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
         $resp['message'] = 'Server configuration prevents running git commands.';
         ahx_wp_github_log_debug('commit failed: proc_open unavailable');
     }
+    if ($action === 'commit_sync' && !empty($resp['success'])) {
+        $release_result = ahx_wp_github_ensure_release_for_version($remote_url, $branch, $new_version);
+        $resp['release_success'] = !empty($release_result['success']);
+        $resp['release_created'] = !empty($release_result['created']);
+        $resp['release_exists'] = !empty($release_result['exists']);
+        $resp['release_version'] = (string)($release_result['version'] ?? '');
+        $resp['release_output'] = (string)($release_result['output'] ?? '');
+
+        if (!empty($release_result['success'])) {
+            if (!empty($release_result['created'])) {
+                ahx_wp_github_log_debug('release created tag=' . (string)$resp['release_version']);
+            } else {
+                ahx_wp_github_log_debug('release already exists tag=' . (string)$resp['release_version']);
+            }
+        } else {
+            $resp['success'] = false;
+            $resp['message'] = 'Sync erfolgreich, aber Release-Erstellung fehlgeschlagen. ' . (string)$resp['release_output'];
+            ahx_wp_github_log_debug('release creation failed output=' . mb_substr((string)$resp['release_output'], 0, 2000));
+        }
+    }
+
     $resp['new_version'] = $new_version;
     ahx_wp_github_log_debug('commit.request done success=' . (!empty($resp['success']) ? '1' : '0') . ' message=' . (string)($resp['message'] ?? '') . ' new_version=' . (string)$new_version . ' used_api=' . ($used_api ? '1' : '0'));
     return $resp;

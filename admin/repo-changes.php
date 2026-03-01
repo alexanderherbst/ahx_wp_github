@@ -339,6 +339,12 @@ if (isset($_POST['commit_action'])) {
     if (empty($_POST['ajax']) || $_POST['ajax'] != '1') {
         if (!empty($result['success'])) {
             ahx_wp_main_add_notice($action_label . ' erfolgreich durchgeführt. Neue Version: ' . esc_html($result['new_version']), 'success');
+            if ($action === 'commit_sync' && !empty($result['release_success']) && !empty($result['release_version'])) {
+                $release_notice = !empty($result['release_created'])
+                    ? ('Release erstellt: ' . $result['release_version'])
+                    : ('Release bereits vorhanden: ' . $result['release_version']);
+                ahx_wp_main_add_notice(esc_html($release_notice), 'success');
+            }
             if (!empty($result['push_output'])) ahx_wp_main_add_notice('Push-Ausgabe (gekürzt): ' . esc_html(substr($result['push_output'],0,400)), 'info');
         } else {
             $error_msg = trim((string)($result['message'] ?? ''));
