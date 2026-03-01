@@ -51,7 +51,10 @@ global $wpdb;
 $table = $wpdb->prefix . 'ahx_wp_github';
 $repos = $wpdb->get_results("SELECT id, name, dir_path FROM $table ORDER BY name ASC");
 
-$selected_repo_id = intval(wp_unslash($_POST['repo_id'] ?? ($_GET['repo_id'] ?? 0)));
+$repo_id_input = isset($_POST['repo_id'])
+    ? wp_unslash($_POST['repo_id'])
+    : wp_unslash($_GET['repo_id'] ?? 0);
+$selected_repo_id = intval($repo_id_input);
 $feature_branch = sanitize_text_field(wp_unslash($_POST['feature_branch'] ?? ''));
 $branch_title = sanitize_text_field(wp_unslash($_POST['branch_title'] ?? ''));
 $messages = [];

@@ -131,13 +131,17 @@ function ahx_wp_github_admin_get_repo_version($dir, $name = '') {
 }
 
 // Änderungen-Ansicht einbinden, falls gewünscht, und sofort beenden
-if (isset($_GET['repo_changes']) && $_GET['repo_changes'] == 1 && isset($_GET['dir'])) {
+$repo_changes_flag = sanitize_text_field(wp_unslash($_GET['repo_changes'] ?? ''));
+$repo_changes_dir = sanitize_text_field(wp_unslash($_GET['dir'] ?? ''));
+if ($repo_changes_flag === '1' && $repo_changes_dir !== '') {
     require_once plugin_dir_path(__FILE__) . 'repo-changes.php';
     return;
 }
 
 // Details-Ansicht einbinden, falls gewünscht, und sofort beenden
-if (isset($_GET['repo_details']) && $_GET['repo_details'] == 1 && isset($_GET['dir'])) {
+$repo_details_flag = sanitize_text_field(wp_unslash($_GET['repo_details'] ?? ''));
+$repo_details_dir = sanitize_text_field(wp_unslash($_GET['dir'] ?? ''));
+if ($repo_details_flag === '1' && $repo_details_dir !== '') {
     require_once plugin_dir_path(__FILE__) . 'repo-details.php';
     return;
 }
