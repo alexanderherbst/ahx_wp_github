@@ -243,14 +243,16 @@ ahx_wp_main_display_admin_notices();
         <?php
         global $wpdb;
         $table = $wpdb->prefix . 'ahx_wp_github';
-        $rows = $wpdb->get_results("SELECT * FROM $table ORDER BY created_at DESC");
+        $rows = $wpdb->get_results("SELECT * FROM $table");
         if ($rows) {
+            $display_rows = [];
             foreach ($rows as $row) {
                 $details_url = admin_url('admin.php?page=ahx-wp-github&repo_details=1&dir=' . urlencode($row->dir_path));
                 $changes_url = admin_url('admin.php?page=ahx-wp-github&repo_changes=1&dir=' . urlencode($row->dir_path));
                 $repo_version = ahx_wp_github_admin_get_repo_version($row->dir_path, $row->name);
                 $git_dir = $row->dir_path . DIRECTORY_SEPARATOR . '.git';
                 $btn_changes = '';
+                $is_actionable = false;
                 if (is_dir($git_dir)) {
                     $git_timeout = intval(get_option('ahx_wp_github_git_timeout_seconds', 15));
                     if ($git_timeout < 5) $git_timeout = 15;
@@ -263,10 +265,19 @@ ahx_wp_main_display_admin_notices();
                     $count = count($lines);
                     $empty_dir_count = ahx_wp_github_admin_count_untracked_empty_dirs($row->dir_path, $git_timeout);
                     $total_count = $count + $empty_dir_count;
+                    $sync_pending = false;
 
                     if ($exit_code === 0 && $total_count > 0) {
+                        $is_actionable = true;
                         $btn_changes = '<a href="' . esc_url($changes_url) . '" class="button" title="Änderungsdetails anzeigen">' . $total_count . ' Änderung' . ($total_count > 1 ? 'en' : '') . '</a>';
-                    } elseif ($exit_code === 0 && $total_count === 0 && ahx_wp_github_admin_is_sync_pending($row->dir_path, $git_timeout)) {
+                    } elseif ($exit_code === 0 && $total_count === 0) {
+                        $sync_pending = ahx_wp_github_admin_is_sync_pending($row->dir_path, $git_timeout);
+                        if ($sync_pending) {
+                            $is_actionable = true;
+                        }
+                    }
+
+                    if ($exit_code === 0 && $total_count === 0 && $sync_pending) {
                         $btn_changes = '<form method="post" style="display:inline; margin:0;">';
                         $btn_changes .= wp_nonce_field('ahx_repo_sync', 'ahx_repo_sync_nonce', true, false);
                         $btn_changes .= '<input type="hidden" name="repo_id" value="' . intval($row->id) . '">';
@@ -278,14 +289,41 @@ ahx_wp_main_display_admin_notices();
                 } else {
                     $btn_changes = '';
                 }
+
+                $display_rows[] = [
+                    'row' => $row,
+                    'details_url' => $details_url,
+                    'repo_version' => $repo_version,
+                    'btn_changes' => $btn_changes,
+                    'priority' => $is_actionable ? 0 : 1,
+                    'sort_name' => strtolower((string)$row->name),
+                ];
+            }
+
+            usort($display_rows, function($a, $b) {
+                $priority_cmp = intval($a['priority']) <=> intval($b['priority']);
+                if ($priority_cmp !== 0) {
+                    return $priority_cmp;
+                }
+
+                $name_cmp = strcmp((string)$a['sort_name'], (string)$b['sort_name']);
+                if ($name_cmp !== 0) {
+                    return $name_cmp;
+                }
+
+                return intval($a['row']->id) <=> intval($b['row']->id);
+            });
+
+            foreach ($display_rows as $entry) {
+                $row = $entry['row'];
                 echo '<tr>';
                 echo '<td>' . esc_html($row->id) . '</td>';
                 echo '<td>' . esc_html($row->name) . '</td>';
                 echo '<td>' . esc_html($row->type) . '</td>';
-                echo '<td>' . esc_html($repo_version) . '</td>';
+                echo '<td>' . esc_html($entry['repo_version']) . '</td>';
                 echo '<td>' . esc_html(preg_replace('/[\\\\\/]+/', DIRECTORY_SEPARATOR, $row->dir_path)) . '</td>';
                 echo '<td>' . esc_html($row->created_at) . '</td>';
-                echo '<td><div style="display:inline-flex;gap:5px;align-items:center">' . $btn_changes . '<a href="' . esc_url($details_url) . '" class="button">Details</a></div></td>';
+                echo '<td><div style="display:inline-flex;gap:5px;align-items:center">' . $entry['btn_changes'] . '<a href="' . esc_url($entry['details_url']) . '" class="button">Details</a></div></td>';
                 echo '</tr>';
             }
         } else {
