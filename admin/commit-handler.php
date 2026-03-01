@@ -224,6 +224,56 @@ function ahx_wp_github_ensure_git_identity($git_bin, $dir, $timeout = 20) {
     return ['ok' => true, 'changed' => $changed, 'name' => $name, 'email' => $email, 'output' => trim($combined_output)];
 }
 
+function ahx_wp_github_extract_conflict_files($output) {
+    $files = [];
+    $text = (string)$output;
+    if ($text === '') {
+        return $files;
+    }
+
+    if (preg_match_all('/CONFLICT \([^\)]*\): .* in ([^\r\n]+)/i', $text, $matches)) {
+        foreach (($matches[1] ?? []) as $file) {
+            $file = trim((string)$file);
+            if ($file !== '') {
+                $files[] = $file;
+            }
+        }
+    }
+
+    return array_values(array_unique($files));
+}
+
+function ahx_wp_github_finalize_rebase_failure($git_bin, $dir, &$resp, $rebase_output, $context_message) {
+    $resp['rebase_output'] = (string)$rebase_output;
+
+    $conflict_files = ahx_wp_github_extract_conflict_files($rebase_output);
+    if (!empty($conflict_files)) {
+        $resp['rebase_conflicts'] = $conflict_files;
+    }
+
+    $abort_res = ahx_run_git_cmd($git_bin, $dir, 'rebase --abort', 25, false);
+    $resp['rebase_abort_output'] = (string)($abort_res['output'] ?? '');
+    $resp['rebase_abort_success'] = intval($abort_res['exit'] ?? 1) === 0;
+
+    $msg = (string)$context_message;
+    if (!empty($conflict_files)) {
+        $msg .= ' Konflikte in: ' . implode(', ', array_slice($conflict_files, 0, 5));
+    }
+    if (!$resp['rebase_abort_success']) {
+        $msg .= ' Zusätzlich konnte rebase --abort nicht sauber ausgeführt werden.';
+    }
+
+    $resp['push_output'] = $resp['rebase_output'];
+    $resp['message'] = $msg;
+    $resp['success'] = false;
+
+    ahx_wp_github_log_debug(
+        'rebase failure handled: context=' . $context_message
+        . ' conflicts=' . (!empty($conflict_files) ? implode(', ', $conflict_files) : 'none')
+        . ' abort_exit=' . intval($abort_res['exit'] ?? 1)
+    );
+}
+
 function ahx_prepare_empty_dirs_for_git($git_bin, $dir, $timeout = 20) {
     $created = [];
     $root = realpath($dir);
@@ -611,11 +661,14 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
 
                         if ($behind > 0) {
                             $rebase_res = ahx_run_git_cmd($git_for_up, $dir, 'pull --rebase --autostash origin ' . escapeshellarg($branch), 60, true);
-                            $resp['rebase_output'] = $rebase_res['output'] ?? '';
                             if (intval($rebase_res['exit'] ?? 1) !== 0) {
-                                $resp['push_output'] = $resp['rebase_output'];
-                                $resp['message'] = 'Sync fehlgeschlagen: Rebase mit Remote konnte nicht durchgeführt werden (möglicher Konflikt).';
-                                $resp['success'] = false;
+                                ahx_wp_github_finalize_rebase_failure(
+                                    $git_for_up,
+                                    $dir,
+                                    $resp,
+                                    (string)($rebase_res['output'] ?? ''),
+                                    'Sync fehlgeschlagen: Rebase mit Remote konnte nicht durchgeführt werden.'
+                                );
                                 $can_push = false;
                                 ahx_wp_github_log_debug('commit_sync rebase failed; push skipped');
                             }
@@ -638,11 +691,14 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
 
                         if ($remote_branch_exists) {
                             $rebase_res = ahx_run_git_cmd($git_for_up, $dir, 'pull --rebase --autostash origin ' . escapeshellarg($branch), 60, true);
-                            $resp['rebase_output'] = $rebase_res['output'] ?? '';
                             if (intval($rebase_res['exit'] ?? 1) !== 0) {
-                                $resp['push_output'] = $resp['rebase_output'];
-                                $resp['message'] = 'Sync fehlgeschlagen: Rebase mit bestehendem Remote-Branch konnte nicht durchgeführt werden.';
-                                $resp['success'] = false;
+                                ahx_wp_github_finalize_rebase_failure(
+                                    $git_for_up,
+                                    $dir,
+                                    $resp,
+                                    (string)($rebase_res['output'] ?? ''),
+                                    'Sync fehlgeschlagen: Rebase mit bestehendem Remote-Branch konnte nicht durchgeführt werden.'
+                                );
                                 $can_push = false;
                                 ahx_wp_github_log_debug('commit_sync rebase failed for existing remote branch; push skipped');
                             }

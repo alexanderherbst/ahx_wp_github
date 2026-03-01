@@ -308,6 +308,26 @@ $v_minor = 'v' . $major . '.' . ((int)$minor + 1) . '.0';
 $v_major = 'v' . ((int)$major + 1) . '.0.0';
 $header_version_disp = (strpos($header_version, 'v') === 0 ? $header_version : 'v' . $header_version);
 
+// Letzte Commits für Footer-Bereich laden
+$recent_commits = [];
+$recent_res = ahx_wp_github_repo_changes_git($dir, 'log -n 10 --date=iso --pretty=format:"%h|%ci|%an|%s"', 20);
+if (intval($recent_res['exit'] ?? 1) === 0) {
+    $recent_lines = preg_split('/\r\n|\r|\n/', trim((string)($recent_res['output'] ?? '')));
+    foreach ($recent_lines as $line) {
+        $line = trim((string)$line);
+        if ($line === '') {
+            continue;
+        }
+        $parts = explode('|', $line, 4);
+        $recent_commits[] = [
+            'hash' => $parts[0] ?? '',
+            'time' => $parts[1] ?? '',
+            'author' => $parts[2] ?? '',
+            'subject' => $parts[3] ?? '',
+        ];
+    }
+}
+
 // Commit-Logik: verarbeite POST bevor Ausgabe (delegiert an gemeinsamen Handler)
 if (isset($_POST['commit_action'])) {
     require_once dirname(__DIR__) . '/admin/commit-handler.php';
@@ -431,5 +451,32 @@ if (isset($_POST['commit_action'])) {
             <button type="submit" name="commit_action" value="commit_sync" class="button button-primary" style="margin-left:12px;" onclick="return confirm('Möchten Sie Commit und anschließenden Sync jetzt ausführen?');">Commit &amp; Sync</button>
         </form>
     <?php endif; ?>
+
+    <h2 style="margin-top:28px;">Letzte 10 Commits</h2>
+    <?php if (!empty($recent_commits)): ?>
+        <table class="widefat striped">
+            <thead>
+                <tr>
+                    <th style="width:120px;">Hash</th>
+                    <th style="width:220px;">Zeitstempel</th>
+                    <th style="width:220px;">Autor</th>
+                    <th>Beschreibung</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($recent_commits as $c): ?>
+                    <tr>
+                        <td><code><?php echo esc_html($c['hash']); ?></code></td>
+                        <td><?php echo esc_html($c['time']); ?></td>
+                        <td><?php echo esc_html($c['author']); ?></td>
+                        <td><?php echo esc_html($c['subject']); ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    <?php else: ?>
+        <p>Keine Commit-Historie verfügbar.</p>
+    <?php endif; ?>
+
     <p><a href="<?php echo esc_url($back_url); ?>" class="button">Zurück</a></p>
 </div>
