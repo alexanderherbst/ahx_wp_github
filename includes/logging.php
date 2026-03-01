@@ -25,15 +25,3 @@ if (!function_exists('ahx_wp_github_safe_log')) {
         error_log('[' . $src . '][' . $lvl . '] ' . $msg);
     }
 }
-
-if (!function_exists('ahx_wp_github_log_debug')) {
-    function ahx_wp_github_log_debug($message, $source = 'ahx_wp_github') {
-        ahx_wp_github_safe_log('DEBUG', $message, $source);
-    }
-}
-
-if (!function_exists('ahx_wp_github_log_error')) {
-    function ahx_wp_github_log_error($message, $source = 'ahx_wp_github') {
-        ahx_wp_github_safe_log('ERROR', $message, $source);
-    }
-}

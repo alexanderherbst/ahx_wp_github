@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.7.1
+Version: v1.7.2
 Author: AHX
 */
 
@@ -132,7 +132,7 @@ function ahx_wp_github_ajax_commit() {
     if (!current_user_can('manage_options')) {
         wp_send_json_error('Keine Berechtigung');
     }
-    ahx_wp_github_log_debug('ajax_commit: incoming request dir=' . var_export($_POST['dir'] ?? '', true));
+    ahx_wp_github_safe_log('DEBUG', 'ajax_commit: incoming request dir=' . var_export($_POST['dir'] ?? '', true));
     $nonce = $_POST['nonce'] ?? '';
     if (!wp_verify_nonce($nonce, 'ahx_repo_commit')) {
         wp_send_json_error('Ungültiger Nonce');

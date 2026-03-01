@@ -11,7 +11,7 @@ if (!function_exists('ahx_wp_github_safe_log')) {
 // Einstellungen registrieren
 function ahx_wp_github_register_settings() {
 
-    ahx_wp_github_log_debug('Aufruf: ' . __METHOD__ . '(' . implode(', ', array_map(fn($a) => preg_replace('/\s+/', ' ', trim(var_export($a, true))), func_get_args())) . ')');
+    ahx_wp_github_safe_log('DEBUG', 'Aufruf: ' . __METHOD__ . '(' . implode(', ', array_map(fn($a) => preg_replace('/\s+/', ' ', trim(var_export($a, true))), func_get_args())) . ')');
 
     add_settings_section('ahx_wp_github_logging', 'Logging', null, 'ahx_wp_github_settings');
     
@@ -34,7 +34,7 @@ function ahx_wp_github_register_settings() {
 add_action('admin_init', 'ahx_wp_github_register_settings');
 
 function ahx_wp_github_level_of_logging_select() {
-    ahx_wp_github_log_debug('Aufruf: ' . __METHOD__ . '(' . implode(', ', array_map(fn($a) => preg_replace('/\s+/', ' ', trim(var_export($a, true))), func_get_args())) . ')');
+    ahx_wp_github_safe_log('DEBUG', 'Aufruf: ' . __METHOD__ . '(' . implode(', ', array_map(fn($a) => preg_replace('/\s+/', ' ', trim(var_export($a, true))), func_get_args())) . ')');
     echo AHX_Logging::get_instance()->build_config_select('ahx_wp_github_level_of_logging');
     echo '<p class="description">Wählen Sie das Log-Level aus, das für die Protokollierung dieses Plugins verwendet werden soll.</p>';
 }

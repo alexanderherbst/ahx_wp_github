@@ -21,7 +21,7 @@ function ahx_wp_github_redact_command($command) {
 // Helper: run command with timeout and capture output/exit code (cross-platform)
 function ahx_run_cmd_with_timeout($cmd, $cwd = null, $env = null, $timeout = 20) {
     $logged_cmd = ahx_wp_github_redact_command($cmd);
-    ahx_wp_github_log_debug('exec.start cmd=' . $logged_cmd . ' cwd=' . (string)$cwd . ' timeout=' . intval($timeout), 'ahx_wp_github');
+    ahx_wp_github_safe_log('DEBUG', 'exec.start cmd=' . $logged_cmd . ' cwd=' . (string)$cwd . ' timeout=' . intval($timeout), 'ahx_wp_github');
 
     $env = is_array($env) ? $env : [];
 
@@ -74,7 +74,7 @@ function ahx_run_cmd_with_timeout($cmd, $cwd = null, $env = null, $timeout = 20)
     $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
     $process = proc_open($cmd, $descriptors, $pipes, $cwd, $env);
     if (!is_resource($process)) {
-        ahx_wp_github_log_error('exec.error cmd=' . $logged_cmd . ' msg=proc_open failed', 'ahx_wp_github');
+        ahx_wp_github_safe_log('ERROR', 'exec.error cmd=' . $logged_cmd . ' msg=proc_open failed', 'ahx_wp_github');
         return ['exit' => -1, 'output' => 'proc_open failed'];
     }
     stream_set_blocking($pipes[1], 0);
@@ -114,7 +114,7 @@ function ahx_run_cmd_with_timeout($cmd, $cwd = null, $env = null, $timeout = 20)
     fclose($pipes[2]);
     proc_close($process);
     $output_excerpt = mb_substr((string)$output, 0, 6000);
-    ahx_wp_github_log_debug('exec.done cmd=' . $logged_cmd . ' exit=' . intval($exit) . ' output=' . $output_excerpt, 'ahx_wp_github');
+    ahx_wp_github_safe_log('DEBUG', 'exec.done cmd=' . $logged_cmd . ' exit=' . intval($exit) . ' output=' . $output_excerpt, 'ahx_wp_github');
     return ['exit' => $exit, 'output' => $output];
 }
 
@@ -141,7 +141,7 @@ function ahx_run_git_cmd($git_bin, $dir, $args, $timeout = 20, $needs_remote_aut
     }
 
     $cmd .= ' ' . $args;
-    ahx_wp_github_log_debug('git.run args=' . (string)$args . ' dir=' . (string)$dir . ' needs_remote_auth=' . ($needs_remote_auth ? '1' : '0'), 'ahx_wp_github');
+    ahx_wp_github_safe_log('DEBUG', 'git.run args=' . (string)$args . ' dir=' . (string)$dir . ' needs_remote_auth=' . ($needs_remote_auth ? '1' : '0'), 'ahx_wp_github');
     return ahx_run_cmd_with_timeout($cmd, $dir, $_ENV, $timeout);
 }
 
@@ -152,7 +152,7 @@ function ahx_wp_github_ensure_git_identity($git_bin, $dir, $timeout = 20) {
     $name = trim((string)($res_name['output'] ?? ''));
     $email = trim((string)($res_email['output'] ?? ''));
     if ($name !== '' && $email !== '') {
-        ahx_wp_github_log_debug('git identity already configured name=' . $name . ' email=' . $email, 'ahx_wp_github');
+        ahx_wp_github_safe_log('DEBUG', 'git identity already configured name=' . $name . ' email=' . $email, 'ahx_wp_github');
         return ['ok' => true, 'changed' => false, 'name' => $name, 'email' => $email, 'output' => ''];
     }
 
@@ -201,7 +201,7 @@ function ahx_wp_github_ensure_git_identity($git_bin, $dir, $timeout = 20) {
         $changed = true;
     }
 
-    ahx_wp_github_log_debug('git identity configured name=' . $name . ' email=' . $email . ' changed=' . ($changed ? '1' : '0'), 'ahx_wp_github');
+    ahx_wp_github_safe_log('DEBUG', 'git identity configured name=' . $name . ' email=' . $email . ' changed=' . ($changed ? '1' : '0'), 'ahx_wp_github');
     return ['ok' => true, 'changed' => $changed, 'name' => $name, 'email' => $email, 'output' => trim($combined_output)];
 }
 
@@ -248,7 +248,7 @@ function ahx_wp_github_finalize_rebase_failure($git_bin, $dir, &$resp, $rebase_o
     $resp['message'] = $msg;
     $resp['success'] = false;
 
-    ahx_wp_github_log_error(
+    ahx_wp_github_safe_log('ERROR', 
         'rebase failure handled: context=' . $context_message
         . ' conflicts=' . (!empty($conflict_files) ? implode(', ', $conflict_files) : 'none')
         . ' abort_exit=' . intval($abort_res['exit'] ?? 1),
@@ -266,7 +266,7 @@ function ahx_wp_github_try_force_with_lease_after_rebase_conflict($git_bin, $dir
         ? 'push --force-with-lease'
         : ('push --force-with-lease --set-upstream origin ' . escapeshellarg($branch));
 
-    ahx_wp_github_log_debug('force-with-lease fallback start cmd=' . $push_cmd, 'ahx_wp_github');
+    ahx_wp_github_safe_log('DEBUG', 'force-with-lease fallback start cmd=' . $push_cmd, 'ahx_wp_github');
     $res_force = ahx_run_git_cmd($git_bin, $dir, $push_cmd, 45, true);
     $resp['force_push_used'] = true;
     $resp['force_push_output'] = (string)($res_force['output'] ?? '');
@@ -276,14 +276,14 @@ function ahx_wp_github_try_force_with_lease_after_rebase_conflict($git_bin, $dir
         $resp['success'] = true;
         $resp['push_output'] = $resp['force_push_output'];
         $resp['message'] = 'Rebase-Konflikt erkannt; Sync wurde mit force-with-lease durchgeführt.';
-        ahx_wp_github_log_debug('force-with-lease fallback success', 'ahx_wp_github');
+        ahx_wp_github_safe_log('DEBUG', 'force-with-lease fallback success', 'ahx_wp_github');
         return true;
     }
 
     $excerpt = trim(mb_substr($resp['force_push_output'], 0, 800));
     $resp['success'] = false;
     $resp['message'] = 'Rebase-Konflikt und Force-with-lease fehlgeschlagen.' . ($excerpt !== '' ? ' ' . $excerpt : '');
-    ahx_wp_github_log_error('force-with-lease fallback failed output=' . mb_substr($resp['force_push_output'], 0, 1500), 'ahx_wp_github');
+    ahx_wp_github_safe_log('ERROR', 'force-with-lease fallback failed output=' . mb_substr($resp['force_push_output'], 0, 1500), 'ahx_wp_github');
     return false;
 }
 
@@ -616,12 +616,12 @@ function ahx_github_api_push($dir, $remote_url, $branch, $files, $commit_msg, $t
 
 // Main entry: process commit request and return structured array
 function ahx_wp_github_process_commit_request($dir, $post_data) {
-    ahx_wp_github_log_debug('commit.request start dir=' . (string)$dir . ' action=' . (string)($post_data['commit_action'] ?? '') . ' bump=' . (string)($post_data['version_bump'] ?? 'none'), 'ahx_wp_github');
+    ahx_wp_github_safe_log('DEBUG', 'commit.request start dir=' . (string)$dir . ' action=' . (string)($post_data['commit_action'] ?? '') . ' bump=' . (string)($post_data['version_bump'] ?? 'none'), 'ahx_wp_github');
 
     $resp = ['success' => false, 'message' => '', 'fetch_output' => '', 'add_output' => '', 'commit_output' => '', 'push_output' => '', 'push_details' => []];
     if (!$dir || !is_dir($dir)) {
         $resp['message'] = 'Invalid dir';
-        ahx_wp_github_log_error('commit.request abort: invalid dir', 'ahx_wp_github');
+        ahx_wp_github_safe_log('ERROR', 'commit.request abort: invalid dir', 'ahx_wp_github');
         return $resp;
     }
 
@@ -631,10 +631,10 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
     $branch = '';
     $allow_force_with_lease_on_rebase_conflict = !empty($post_data['allow_force_with_lease_on_rebase_conflict'])
         && in_array((string)$post_data['allow_force_with_lease_on_rebase_conflict'], ['1', 'true', 'on', 'yes'], true);
-    ahx_wp_github_log_debug('commit.request option allow_force_with_lease_on_rebase_conflict=' . ($allow_force_with_lease_on_rebase_conflict ? '1' : '0'), 'ahx_wp_github');
+    ahx_wp_github_safe_log('DEBUG', 'commit.request option allow_force_with_lease_on_rebase_conflict=' . ($allow_force_with_lease_on_rebase_conflict ? '1' : '0'), 'ahx_wp_github');
     if ($commit_msg === '') {
         $resp['message'] = 'Empty commit message';
-        ahx_wp_github_log_error('commit.request abort: empty commit message', 'ahx_wp_github');
+        ahx_wp_github_safe_log('ERROR', 'commit.request abort: empty commit message', 'ahx_wp_github');
         return $resp;
     }
 
@@ -642,7 +642,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
     $created_placeholders = ahx_prepare_empty_dirs_for_git($git_bin_for_scan, $dir, 20);
     if (!empty($created_placeholders)) {
         $resp['empty_dir_placeholders_created'] = $created_placeholders;
-        ahx_wp_github_log_debug('empty dir placeholders created: ' . implode(', ', $created_placeholders), 'ahx_wp_github');
+        ahx_wp_github_safe_log('DEBUG', 'empty dir placeholders created: ' . implode(', ', $created_placeholders), 'ahx_wp_github');
     }
 
     // Determine changed files (simple porcelain parsing)
@@ -659,12 +659,12 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
             $files[] = ['status' => $status, 'file' => $file];
         }
     }
-    ahx_wp_github_log_debug('detected changed entries: ' . count($files), 'ahx_wp_github');
+    ahx_wp_github_safe_log('DEBUG', 'detected changed entries: ' . count($files), 'ahx_wp_github');
 
     if (count($files) === 0) {
         $resp['no_changes'] = true;
         $resp['message'] = 'Keine Änderungen vorhanden. Commit/Version-Bump wurde nicht ausgeführt.';
-        ahx_wp_github_log_error('commit.request abort: no changes detected before version bump', 'ahx_wp_github');
+        ahx_wp_github_safe_log('ERROR', 'commit.request abort: no changes detected before version bump', 'ahx_wp_github');
         return $resp;
     }
 
@@ -700,7 +700,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
     }
     $version_txt = $dir . DIRECTORY_SEPARATOR . 'version.txt';
     if (file_exists($version_txt)) file_put_contents($version_txt, $new_version . "\n");
-    ahx_wp_github_log_debug('version bump result: old=' . (string)$header_version . ' new=' . (string)$new_version . ' mode=' . (string)$bump, 'ahx_wp_github');
+    ahx_wp_github_safe_log('DEBUG', 'version bump result: old=' . (string)$header_version . ' new=' . (string)$new_version . ' mode=' . (string)$bump, 'ahx_wp_github');
 
     // Decide API vs git
     $shell_exec_disabled = false;
@@ -717,10 +717,10 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
             $resp['safe_directory_configured'] = true;
             $resp['safe_directory_cmd_output'] = trim((string)($safe_res['output'] ?? ''));
             $resp['safe_directory_cmd_exit'] = intval($safe_res['exit'] ?? 1);
-            ahx_wp_github_log_debug('safe.directory configured exit=' . intval($resp['safe_directory_cmd_exit']) . ' output=' . mb_substr((string)$resp['safe_directory_cmd_output'], 0, 2000), 'ahx_wp_github');
+            ahx_wp_github_safe_log('DEBUG', 'safe.directory configured exit=' . intval($resp['safe_directory_cmd_exit']) . ' output=' . mb_substr((string)$resp['safe_directory_cmd_output'], 0, 2000), 'ahx_wp_github');
         } else {
             $resp['safe_directory_configured'] = false;
-            ahx_wp_github_log_debug('safe.directory not enabled for repo', 'ahx_wp_github');
+            ahx_wp_github_safe_log('DEBUG', 'safe.directory not enabled for repo', 'ahx_wp_github');
         }
         $gh_token = get_option('ahx_wp_main_github_token', '');
         $prefer_api = get_option('ahx_wp_github_prefer_api', '1');
@@ -733,7 +733,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
         $branch = (intval($branch_res['exit'] ?? 1) === 0) ? trim((string)($branch_res['output'] ?? '')) : '';
 
         if ($prefer_api_enabled && !empty($gh_token) && !empty($remote_url)) {
-            ahx_wp_github_log_debug('commit mode: github-api push', 'ahx_wp_github');
+            ahx_wp_github_safe_log('DEBUG', 'commit mode: github-api push', 'ahx_wp_github');
             $push_result = ahx_github_api_push($dir, $remote_url, $branch, $files, $commit_msg, $gh_token);
             $resp['push_output'] = $push_result['output'] ?? '';
             $resp['push_details'] = $push_result['files'] ?? [];
@@ -752,7 +752,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                     $resp['local_commit_message'] = 'Git-Identität (Name/E-Mail) konnte nicht gesetzt werden.';
                     $resp['message'] = $resp['local_commit_message'];
                     $resp['success'] = false;
-                    ahx_wp_github_log_error('local commit aborted: identity setup failed output=' . mb_substr($resp['identity_output'], 0, 2000), 'ahx_wp_github');
+                    ahx_wp_github_safe_log('ERROR', 'local commit aborted: identity setup failed output=' . mb_substr($resp['identity_output'], 0, 2000), 'ahx_wp_github');
                     $resp['new_version'] = $new_version;
                     return $resp;
                 }
@@ -763,7 +763,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                 $res_commit_local = ahx_run_cmd_with_timeout($commit_cmd_local, $dir, $_ENV, 20);
                 $resp['local_commit_output'] = $res_commit_local['output'] ?? '';
                 $resp['local_commit_success'] = intval($res_commit_local['exit']) === 0;
-                ahx_wp_github_log_debug('local commit exit=' . intval($res_commit_local['exit']) . ' output=' . mb_substr((string)$resp['local_commit_output'], 0, 3000), 'ahx_wp_github');
+                ahx_wp_github_safe_log('DEBUG', 'local commit exit=' . intval($res_commit_local['exit']) . ' output=' . mb_substr((string)$resp['local_commit_output'], 0, 3000), 'ahx_wp_github');
 
                 // No local fetch here: remote sync is already done via API and fetch may fail in webserver runtime
                 $resp['local_fetch_output'] = 'Skipped (API sync already performed)';
@@ -775,14 +775,14 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                     $res_up = ahx_run_cmd_with_timeout($up_cmd, $dir, $_ENV, 10);
                     $resp['set_upstream_output'] = $res_up['output'] ?? '';
                     $resp['set_upstream_success'] = intval($res_up['exit']) === 0;
-                    ahx_wp_github_log_debug('set-upstream exit=' . intval($res_up['exit']) . ' output=' . mb_substr((string)$resp['set_upstream_output'], 0, 3000), 'ahx_wp_github');
+                    ahx_wp_github_safe_log('DEBUG', 'set-upstream exit=' . intval($res_up['exit']) . ' output=' . mb_substr((string)$resp['set_upstream_output'], 0, 3000), 'ahx_wp_github');
                 }
             } else {
                 $resp['local_commit_message'] = 'Server configuration prevents running git commands.';
-                ahx_wp_github_log_error('local history sync skipped: proc_open not available', 'ahx_wp_github');
+                ahx_wp_github_safe_log('ERROR', 'local history sync skipped: proc_open not available', 'ahx_wp_github');
             }
         } else {
-            ahx_wp_github_log_debug('commit mode: local git', 'ahx_wp_github');
+            ahx_wp_github_safe_log('DEBUG', 'commit mode: local git', 'ahx_wp_github');
             $res_fetch = ahx_run_git_cmd($git_bin, $dir, 'fetch --all', 20, true);
             $resp['fetch_output'] = $res_fetch['output'] ?? '';
             $res_add = ahx_run_git_cmd($git_bin, $dir, 'add .', 20, false);
@@ -794,7 +794,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                 $resp['commit_output'] = $resp['identity_output'];
                 $resp['success'] = false;
                 $resp['new_version'] = $new_version;
-                ahx_wp_github_log_error('commit aborted: identity setup failed output=' . mb_substr($resp['identity_output'], 0, 2000), 'ahx_wp_github');
+                ahx_wp_github_safe_log('ERROR', 'commit aborted: identity setup failed output=' . mb_substr($resp['identity_output'], 0, 2000), 'ahx_wp_github');
                 return $resp;
             }
             $commit_cmd = 'commit -m ' . escapeshellarg($commit_msg);
@@ -804,7 +804,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                 $resp['success'] = false;
                 $resp['message'] = 'Commit fehlgeschlagen.';
                 $resp['new_version'] = $new_version;
-                ahx_wp_github_log_error('commit failed before sync; aborting action', 'ahx_wp_github');
+                ahx_wp_github_safe_log('ERROR', 'commit failed before sync; aborting action', 'ahx_wp_github');
                 return $resp;
             }
             if ($action === 'commit_sync') {
@@ -818,11 +818,11 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                 if ($branch === '' || $branch === 'HEAD') {
                     $resp['push_output'] = 'Konnte aktuellen Branch nicht bestimmen; Sync abgebrochen.';
                     $resp['success'] = false;
-                    ahx_wp_github_log_error('push aborted: branch unresolved', 'ahx_wp_github');
+                    ahx_wp_github_safe_log('ERROR', 'push aborted: branch unresolved', 'ahx_wp_github');
                 } else {
                     $upstream_res = ahx_run_git_cmd($git_for_up, $dir, 'rev-parse --abbrev-ref --symbolic-full-name @{u}', 20, false);
                     $has_upstream = intval($upstream_res['exit'] ?? 1) === 0 && trim((string)($upstream_res['output'] ?? '')) !== '';
-                    ahx_wp_github_log_debug('commit_sync upstream=' . ($has_upstream ? trim((string)$upstream_res['output']) : 'none'), 'ahx_wp_github');
+                    ahx_wp_github_safe_log('DEBUG', 'commit_sync upstream=' . ($has_upstream ? trim((string)$upstream_res['output']) : 'none'), 'ahx_wp_github');
                     $can_push = true;
 
                     if ($has_upstream) {
@@ -834,7 +834,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                             $behind = isset($parts[0]) ? intval($parts[0]) : 0;
                             $ahead = isset($parts[1]) ? intval($parts[1]) : 0;
                         }
-                        ahx_wp_github_log_debug('commit_sync ahead=' . intval($ahead) . ' behind=' . intval($behind), 'ahx_wp_github');
+                        ahx_wp_github_safe_log('DEBUG', 'commit_sync ahead=' . intval($ahead) . ' behind=' . intval($behind), 'ahx_wp_github');
 
                         if ($behind > 0) {
                             $rebase_res = ahx_run_git_cmd($git_for_up, $dir, 'pull --rebase --autostash origin ' . escapeshellarg($branch), 60, true);
@@ -850,7 +850,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                                     ahx_wp_github_try_force_with_lease_after_rebase_conflict($git_for_up, $dir, $branch, true, $resp);
                                 }
                                 $can_push = false;
-                                ahx_wp_github_log_error('commit_sync rebase failed; push skipped', 'ahx_wp_github');
+                                ahx_wp_github_safe_log('ERROR', 'commit_sync rebase failed; push skipped', 'ahx_wp_github');
                             }
                         }
                     }
@@ -867,7 +867,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                         );
                         $remote_branch_exists = intval($remote_branch_res['exit'] ?? 1) === 0
                             && trim((string)($remote_branch_res['output'] ?? '')) !== '';
-                        ahx_wp_github_log_debug('commit_sync remote branch exists=' . ($remote_branch_exists ? '1' : '0') . ' branch=' . $branch, 'ahx_wp_github');
+                        ahx_wp_github_safe_log('DEBUG', 'commit_sync remote branch exists=' . ($remote_branch_exists ? '1' : '0') . ' branch=' . $branch, 'ahx_wp_github');
 
                         if ($remote_branch_exists) {
                             $rebase_res = ahx_run_git_cmd($git_for_up, $dir, 'pull --rebase --autostash origin ' . escapeshellarg($branch), 60, true);
@@ -883,7 +883,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                                     ahx_wp_github_try_force_with_lease_after_rebase_conflict($git_for_up, $dir, $branch, false, $resp);
                                 }
                                 $can_push = false;
-                                ahx_wp_github_log_error('commit_sync rebase failed for existing remote branch; push skipped', 'ahx_wp_github');
+                                ahx_wp_github_safe_log('ERROR', 'commit_sync rebase failed for existing remote branch; push skipped', 'ahx_wp_github');
                             }
                         }
                     }
@@ -909,7 +909,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
         }
     } else {
         $resp['message'] = 'Server configuration prevents running git commands.';
-        ahx_wp_github_log_error('commit failed: proc_open unavailable', 'ahx_wp_github');
+        ahx_wp_github_safe_log('ERROR', 'commit failed: proc_open unavailable', 'ahx_wp_github');
     }
     if ($action === 'commit_sync' && !empty($resp['success'])) {
         $release_result = ahx_wp_github_ensure_release_for_version($remote_url, $branch, $new_version);
@@ -921,18 +921,18 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
 
         if (!empty($release_result['success'])) {
             if (!empty($release_result['created'])) {
-                ahx_wp_github_log_debug('release created tag=' . (string)$resp['release_version'], 'ahx_wp_github');
+                ahx_wp_github_safe_log('DEBUG', 'release created tag=' . (string)$resp['release_version'], 'ahx_wp_github');
             } else {
-                ahx_wp_github_log_debug('release already exists tag=' . (string)$resp['release_version'], 'ahx_wp_github');
+                ahx_wp_github_safe_log('DEBUG', 'release already exists tag=' . (string)$resp['release_version'], 'ahx_wp_github');
             }
         } else {
             $resp['success'] = false;
             $resp['message'] = 'Sync erfolgreich, aber Release-Erstellung fehlgeschlagen. ' . (string)$resp['release_output'];
-            ahx_wp_github_log_error('release creation failed output=' . mb_substr((string)$resp['release_output'], 0, 2000), 'ahx_wp_github');
+            ahx_wp_github_safe_log('ERROR', 'release creation failed output=' . mb_substr((string)$resp['release_output'], 0, 2000), 'ahx_wp_github');
         }
     }
 
     $resp['new_version'] = $new_version;
-    ahx_wp_github_log_debug('commit.request done success=' . (!empty($resp['success']) ? '1' : '0') . ' message=' . (string)($resp['message'] ?? '') . ' new_version=' . (string)$new_version . ' used_api=' . ($used_api ? '1' : '0'), 'ahx_wp_github');
+    ahx_wp_github_safe_log('DEBUG', 'commit.request done success=' . (!empty($resp['success']) ? '1' : '0') . ' message=' . (string)($resp['message'] ?? '') . ' new_version=' . (string)$new_version . ' used_api=' . ($used_api ? '1' : '0'), 'ahx_wp_github');
     return $resp;
 }
