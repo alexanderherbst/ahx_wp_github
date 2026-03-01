@@ -127,17 +127,85 @@ if (isset($_POST['ahx_repo_settings_submit']) && current_user_can('manage_option
     exit;
 }
 
+if (isset($_POST['ahx_repo_branch_action_submit']) && current_user_can('manage_options')) {
+    if (!isset($_POST['ahx_repo_branch_action_nonce']) || !wp_verify_nonce($_POST['ahx_repo_branch_action_nonce'], 'ahx_repo_branch_action')) {
+        ahx_wp_main_add_notice('Ungültiger Nonce.', 'error');
+    } elseif (!$has_git_repo || $git_bin === '') {
+        ahx_wp_main_add_notice('Kein Git-Repository gefunden.', 'error');
+    } else {
+        $branch_scope = sanitize_text_field(wp_unslash($_POST['branch_scope'] ?? ''));
+        $branch_name = sanitize_text_field(wp_unslash($_POST['branch_name'] ?? ''));
+
+        $current_branch_res = ahx_run_git_cmd($git_bin, $dir, 'rev-parse --abbrev-ref HEAD', 20, false);
+        $current_branch = trim((string)($current_branch_res['output'] ?? ''));
+
+        $default_branch = '';
+        $default_branch_res = ahx_run_git_cmd($git_bin, $dir, 'symbolic-ref refs/remotes/origin/HEAD', 20, false);
+        if (intval($default_branch_res['exit'] ?? 1) === 0) {
+            $default_ref = trim((string)($default_branch_res['output'] ?? ''));
+            if (preg_match('#^refs/remotes/origin/(.+)$#', $default_ref, $m)) {
+                $default_branch = trim((string)($m[1] ?? ''));
+            }
+        }
+
+        if ($branch_name === '' || !preg_match('/^[A-Za-z0-9._\/-]+$/', $branch_name)) {
+            ahx_wp_main_add_notice('Ungültiger Branch-Name.', 'error');
+        } elseif ($branch_scope === 'local') {
+            if ($branch_name === $current_branch) {
+                ahx_wp_main_add_notice('Der aktuell ausgecheckte Branch kann nicht gelöscht werden.', 'error');
+            } elseif ($default_branch !== '' && $branch_name === $default_branch) {
+                ahx_wp_main_add_notice('Der Default-Branch kann nicht lokal gelöscht werden.', 'error');
+            } else {
+                $delete_res = ahx_run_git_cmd($git_bin, $dir, 'branch -d ' . escapeshellarg($branch_name), 20, false);
+                if (intval($delete_res['exit'] ?? 1) === 0) {
+                    ahx_wp_main_add_notice('Lokaler Branch gelöscht: ' . esc_html($branch_name), 'success');
+                } else {
+                    $msg = trim((string)($delete_res['output'] ?? ''));
+                    ahx_wp_main_add_notice('Lokaler Branch konnte nicht gelöscht werden: ' . ($msg !== '' ? esc_html(mb_substr($msg, 0, 400)) : 'Unbekannter Fehler'), 'error');
+                }
+            }
+        } elseif ($branch_scope === 'remote') {
+            if ($default_branch !== '' && $branch_name === $default_branch) {
+                ahx_wp_main_add_notice('Der Default-Branch kann nicht remote gelöscht werden.', 'error');
+            } else {
+                $delete_res = ahx_run_git_cmd($git_bin, $dir, 'push origin --delete ' . escapeshellarg($branch_name), 30, true);
+                if (intval($delete_res['exit'] ?? 1) === 0) {
+                    ahx_wp_main_add_notice('Remote-Branch gelöscht: origin/' . esc_html($branch_name), 'success');
+                } else {
+                    $msg = trim((string)($delete_res['output'] ?? ''));
+                    ahx_wp_main_add_notice('Remote-Branch konnte nicht gelöscht werden: ' . ($msg !== '' ? esc_html(mb_substr($msg, 0, 400)) : 'Unbekannter Fehler'), 'error');
+                }
+            }
+        } else {
+            ahx_wp_main_add_notice('Ungültiger Branch-Typ.', 'error');
+        }
+    }
+
+    $redirect_url = admin_url('admin.php?page=ahx-wp-github&repo_details=1&dir=' . urlencode($dir));
+    if (!headers_sent()) {
+        wp_safe_redirect($redirect_url);
+        exit;
+    }
+    echo '<script>window.location.href = ' . json_encode($redirect_url) . ';</script>';
+    exit;
+}
+
 ahx_wp_main_display_admin_notices();
 
 // Git-Infos auslesen
 $info = [];
 $git_user_name_current = '';
 $git_user_email_current = '';
+$current_branch = '';
+$default_branch = '';
+$local_branches = [];
+$remote_branches = [];
 if ($has_git_repo) {
 
     // Aktueller Branch
     $branch_res = ahx_run_git_cmd($git_bin, $dir, 'rev-parse --abbrev-ref HEAD', 20, false);
     $branch = trim((string)($branch_res['output'] ?? ''));
+    $current_branch = $branch;
     $info['Branch'] = $branch;
     // Letzter Commit
     $commit_res = ahx_run_git_cmd($git_bin, $dir, 'log -1 --pretty=format:"%h %s (%ci)"', 20, false);
@@ -152,6 +220,58 @@ if ($has_git_repo) {
     $git_user_name_current = trim((string)($user_name_res['output'] ?? ''));
     $user_email_res = ahx_run_git_cmd($git_bin, $dir, 'config --get user.email', 20, false);
     $git_user_email_current = trim((string)($user_email_res['output'] ?? ''));
+
+    $default_branch_res = ahx_run_git_cmd($git_bin, $dir, 'symbolic-ref refs/remotes/origin/HEAD', 20, false);
+    if (intval($default_branch_res['exit'] ?? 1) === 0) {
+        $default_ref = trim((string)($default_branch_res['output'] ?? ''));
+        if (preg_match('#^refs/remotes/origin/(.+)$#', $default_ref, $m)) {
+            $default_branch = trim((string)($m[1] ?? ''));
+        }
+    }
+
+    $local_branch_res = ahx_run_git_cmd($git_bin, $dir, 'for-each-ref --format="%(refname:short)|%(objectname:short)|%(committerdate:iso8601)|%(authorname)|%(subject)" refs/heads', 20, false);
+    if (intval($local_branch_res['exit'] ?? 1) === 0) {
+        $lines = preg_split('/\r\n|\r|\n/', trim((string)($local_branch_res['output'] ?? '')));
+        foreach ($lines as $line) {
+            $line = trim((string)$line);
+            if ($line === '') continue;
+            $parts = explode('|', $line, 5);
+            $name = trim((string)($parts[0] ?? ''));
+            if ($name === '') continue;
+            $local_branches[] = [
+                'name' => $name,
+                'hash' => trim((string)($parts[1] ?? '')),
+                'time' => trim((string)($parts[2] ?? '')),
+                'author' => trim((string)($parts[3] ?? '')),
+                'subject' => trim((string)($parts[4] ?? '')),
+                'is_current' => ($name === $current_branch),
+                'is_default' => ($default_branch !== '' && $name === $default_branch),
+            ];
+        }
+    }
+
+    $remote_branch_res = ahx_run_git_cmd($git_bin, $dir, 'for-each-ref --format="%(refname:short)|%(objectname:short)|%(committerdate:iso8601)|%(authorname)|%(subject)" refs/remotes/origin', 20, false);
+    if (intval($remote_branch_res['exit'] ?? 1) === 0) {
+        $lines = preg_split('/\r\n|\r|\n/', trim((string)($remote_branch_res['output'] ?? '')));
+        foreach ($lines as $line) {
+            $line = trim((string)$line);
+            if ($line === '') continue;
+            $parts = explode('|', $line, 5);
+            $full_name = trim((string)($parts[0] ?? ''));
+            if ($full_name === '' || $full_name === 'origin/HEAD') continue;
+            $name = preg_replace('#^origin/#', '', $full_name);
+            if ($name === '') continue;
+            $remote_branches[] = [
+                'name' => $name,
+                'full_name' => $full_name,
+                'hash' => trim((string)($parts[1] ?? '')),
+                'time' => trim((string)($parts[2] ?? '')),
+                'author' => trim((string)($parts[3] ?? '')),
+                'subject' => trim((string)($parts[4] ?? '')),
+                'is_default' => ($default_branch !== '' && $name === $default_branch),
+            ];
+        }
+    }
 } else {
     $info['Fehler'] = 'Kein Git-Repository gefunden.';
 }
@@ -195,6 +315,97 @@ $back_url = admin_url('admin.php?page=ahx-wp-github');
                 <button type="submit" name="ahx_git_identity_reset" value="1" class="button" <?php echo $has_git_repo ? '' : 'disabled'; ?> style="margin-left:8px;" onclick="return confirm('Möchten Sie git user.name und git user.email für dieses Repository wirklich zurücksetzen?');">user.name / user.email zurücksetzen</button>
             </p>
         </form>
+    <?php endif; ?>
+
+    <?php if ($has_git_repo): ?>
+        <h2>Branches</h2>
+        <p>
+            <strong>Aktuell:</strong> <?php echo esc_html($current_branch !== '' ? $current_branch : '-'); ?>
+            <?php if ($default_branch !== ''): ?>
+                &nbsp;|&nbsp;<strong>Default (origin/HEAD):</strong> <?php echo esc_html($default_branch); ?>
+            <?php endif; ?>
+        </p>
+
+        <h3>Lokale Branches</h3>
+        <?php if (!empty($local_branches)): ?>
+            <table class="widefat striped">
+                <thead>
+                    <tr>
+                        <th>Branch</th><th>Hash</th><th>Zeit</th><th>Autor</th><th>Beschreibung</th><th>Aktion</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($local_branches as $b): ?>
+                        <tr>
+                            <td>
+                                <?php echo esc_html($b['name']); ?>
+                                <?php if (!empty($b['is_current'])): ?> <em>(aktuell)</em><?php endif; ?>
+                                <?php if (!empty($b['is_default'])): ?> <em>(default)</em><?php endif; ?>
+                            </td>
+                            <td><code><?php echo esc_html($b['hash']); ?></code></td>
+                            <td><?php echo esc_html($b['time']); ?></td>
+                            <td><?php echo esc_html($b['author']); ?></td>
+                            <td><?php echo esc_html($b['subject']); ?></td>
+                            <td>
+                                <?php if (!empty($b['is_current']) || !empty($b['is_default'])): ?>
+                                    <span style="color:#666;">geschützt</span>
+                                <?php else: ?>
+                                    <form method="post" style="display:inline;">
+                                        <?php wp_nonce_field('ahx_repo_branch_action', 'ahx_repo_branch_action_nonce', true, true); ?>
+                                        <input type="hidden" name="ahx_repo_branch_action_submit" value="1">
+                                        <input type="hidden" name="branch_scope" value="local">
+                                        <input type="hidden" name="branch_name" value="<?php echo esc_attr($b['name']); ?>">
+                                        <button type="submit" class="button" onclick="return confirm('Lokalen Branch <?php echo esc_js($b['name']); ?> wirklich löschen?');">Löschen</button>
+                                    </form>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php else: ?>
+            <p>Keine lokalen Branches gefunden.</p>
+        <?php endif; ?>
+
+        <h3 style="margin-top:20px;">Remote-Branches (origin)</h3>
+        <?php if (!empty($remote_branches)): ?>
+            <table class="widefat striped">
+                <thead>
+                    <tr>
+                        <th>Branch</th><th>Hash</th><th>Zeit</th><th>Autor</th><th>Beschreibung</th><th>Aktion</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($remote_branches as $b): ?>
+                        <tr>
+                            <td>
+                                <?php echo esc_html($b['full_name']); ?>
+                                <?php if (!empty($b['is_default'])): ?> <em>(default)</em><?php endif; ?>
+                            </td>
+                            <td><code><?php echo esc_html($b['hash']); ?></code></td>
+                            <td><?php echo esc_html($b['time']); ?></td>
+                            <td><?php echo esc_html($b['author']); ?></td>
+                            <td><?php echo esc_html($b['subject']); ?></td>
+                            <td>
+                                <?php if (!empty($b['is_default'])): ?>
+                                    <span style="color:#666;">geschützt</span>
+                                <?php else: ?>
+                                    <form method="post" style="display:inline;">
+                                        <?php wp_nonce_field('ahx_repo_branch_action', 'ahx_repo_branch_action_nonce', true, true); ?>
+                                        <input type="hidden" name="ahx_repo_branch_action_submit" value="1">
+                                        <input type="hidden" name="branch_scope" value="remote">
+                                        <input type="hidden" name="branch_name" value="<?php echo esc_attr($b['name']); ?>">
+                                        <button type="submit" class="button" onclick="return confirm('Remote-Branch origin/<?php echo esc_js($b['name']); ?> wirklich löschen?');">Löschen</button>
+                                    </form>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php else: ?>
+            <p>Keine Remote-Branches gefunden.</p>
+        <?php endif; ?>
     <?php endif; ?>
 
     <table class="widefat">
