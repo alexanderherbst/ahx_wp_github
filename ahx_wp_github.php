@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.6.5
+Version: v1.6.6
 Author: AHX
 */
 
@@ -148,4 +148,122 @@ function ahx_wp_github_ajax_commit() {
     $res = ahx_wp_github_process_commit_request($dir, $post_body);
     if (empty($res)) wp_send_json_error('Handler returned no response');
     wp_send_json_success($res);
+}
+
+function ahx_wp_github_normalize_dir_path($path) {
+    $path = trim((string)$path);
+    if ($path === '') {
+        return '';
+    }
+
+    $path = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
+    if (preg_match('/^[A-Za-z]:' . preg_quote(DIRECTORY_SEPARATOR, '/') . '$/', $path)) {
+        return strtoupper(substr($path, 0, 1)) . ':' . DIRECTORY_SEPARATOR;
+    }
+
+    $normalized = rtrim($path, "\\/");
+    if (preg_match('/^[A-Za-z]:$/', $normalized)) {
+        $normalized .= DIRECTORY_SEPARATOR;
+    }
+
+    return $normalized;
+}
+
+function ahx_wp_github_get_browse_roots() {
+    $roots = [];
+
+    if (preg_match('/^WIN/i', PHP_OS)) {
+        foreach (range('A', 'Z') as $drive) {
+            $candidate = $drive . ':\\';
+            if (is_dir($candidate)) {
+                $roots[] = $candidate;
+            }
+        }
+    } else {
+        $roots[] = DIRECTORY_SEPARATOR;
+    }
+
+    if (defined('ABSPATH')) {
+        $roots[] = ABSPATH;
+    }
+    if (defined('WP_CONTENT_DIR')) {
+        $roots[] = WP_CONTENT_DIR;
+    }
+
+    $normalized = [];
+    foreach ($roots as $root) {
+        $clean = ahx_wp_github_normalize_dir_path($root);
+        if ($clean !== '' && is_dir($clean)) {
+            $normalized[] = $clean;
+        }
+    }
+
+    $normalized = array_values(array_unique($normalized));
+    sort($normalized, SORT_NATURAL | SORT_FLAG_CASE);
+
+    return $normalized;
+}
+
+add_action('wp_ajax_ahx_repo_browse_dirs', 'ahx_wp_github_ajax_browse_dirs');
+function ahx_wp_github_ajax_browse_dirs() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Keine Berechtigung');
+    }
+
+    $nonce = $_POST['nonce'] ?? '';
+    if (!wp_verify_nonce($nonce, 'ahx_repo_browse')) {
+        wp_send_json_error('Ungültiger Nonce');
+    }
+
+    $roots = ahx_wp_github_get_browse_roots();
+    $requested = isset($_POST['path']) ? wp_unslash($_POST['path']) : '';
+    $path = ahx_wp_github_normalize_dir_path($requested);
+
+    if ($path === '') {
+        if (!empty($roots)) {
+            $path = $roots[0];
+        } elseif (defined('ABSPATH')) {
+            $path = ahx_wp_github_normalize_dir_path(ABSPATH);
+        }
+    }
+
+    if ($path === '' || !is_dir($path)) {
+        wp_send_json_error('Verzeichnis nicht gefunden');
+    }
+
+    $items = @scandir($path);
+    if ($items === false) {
+        wp_send_json_error('Verzeichnis kann nicht gelesen werden');
+    }
+
+    $dirs = [];
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') {
+            continue;
+        }
+        $child = $path . DIRECTORY_SEPARATOR . $item;
+        if (is_dir($child)) {
+            $dirs[] = [
+                'name' => $item,
+                'path' => ahx_wp_github_normalize_dir_path($child),
+            ];
+        }
+    }
+
+    usort($dirs, function($a, $b) {
+        return strcasecmp((string)$a['name'], (string)$b['name']);
+    });
+
+    $parent = dirname($path);
+    $parent = ahx_wp_github_normalize_dir_path($parent);
+    if ($parent === $path || $parent === '.') {
+        $parent = '';
+    }
+
+    wp_send_json_success([
+        'path' => $path,
+        'parent_path' => $parent,
+        'roots' => $roots,
+        'dirs' => $dirs,
+    ]);
 }

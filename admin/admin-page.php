@@ -231,8 +231,35 @@ ahx_wp_main_display_admin_notices();
     <form method="post">
         <label for="ahx_github_dir">Verzeichnis:</label>
         <input type="text" name="ahx_github_dir" id="ahx_github_dir" style="width:400px;" required />
+        <button type="button" id="ahx-open-dir-picker" class="button">Auswählen…</button>
         <input type="submit" name="ahx_github_dir_submit" class="button button-primary" value="Erfassen" />
     </form>
+
+    <div id="ahx-dir-picker-modal" style="display:none; position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,0.45);">
+        <div style="width:760px; max-width:95vw; max-height:85vh; overflow:hidden; margin:5vh auto; background:#fff; border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,0.2); display:flex; flex-direction:column;">
+            <div style="padding:12px 16px; border-bottom:1px solid #dcdcde; display:flex; justify-content:space-between; align-items:center;">
+                <strong>Verzeichnis auswählen</strong>
+                <button type="button" id="ahx-dir-picker-close" class="button">Schließen</button>
+            </div>
+            <div style="padding:12px 16px; border-bottom:1px solid #f0f0f1;">
+                <div style="margin-bottom:8px;">
+                    <label for="ahx-dir-picker-path"><strong>Aktueller Pfad</strong></label>
+                    <input type="text" id="ahx-dir-picker-path" style="width:100%;" readonly />
+                </div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                    <button type="button" id="ahx-dir-picker-up" class="button">Eine Ebene höher</button>
+                    <select id="ahx-dir-picker-roots" style="min-width:220px;"></select>
+                    <button type="button" id="ahx-dir-picker-open-root" class="button">Root öffnen</button>
+                    <button type="button" id="ahx-dir-picker-choose" class="button button-primary">Dieses Verzeichnis übernehmen</button>
+                </div>
+            </div>
+            <div style="padding:12px 16px; overflow:auto; flex:1;">
+                <div id="ahx-dir-picker-status" style="margin-bottom:8px; color:#50575e;"></div>
+                <ul id="ahx-dir-picker-list" style="margin:0; padding:0; list-style:none;"></ul>
+            </div>
+        </div>
+    </div>
+
     <hr />
     <h2>Erfasste Verzeichnisse</h2>
     <table class="widefat">
@@ -336,3 +363,174 @@ ahx_wp_main_display_admin_notices();
 
 <?php
 echo "</div>";
+
+$ahx_dir_browse_nonce = wp_create_nonce('ahx_repo_browse');
+?>
+<script>
+(function() {
+    const ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>;
+    const browseNonce = <?php echo wp_json_encode($ahx_dir_browse_nonce); ?>;
+    const dirInput = document.getElementById('ahx_github_dir');
+    const openBtn = document.getElementById('ahx-open-dir-picker');
+    const modal = document.getElementById('ahx-dir-picker-modal');
+    const closeBtn = document.getElementById('ahx-dir-picker-close');
+    const pathField = document.getElementById('ahx-dir-picker-path');
+    const upBtn = document.getElementById('ahx-dir-picker-up');
+    const rootsSelect = document.getElementById('ahx-dir-picker-roots');
+    const openRootBtn = document.getElementById('ahx-dir-picker-open-root');
+    const chooseBtn = document.getElementById('ahx-dir-picker-choose');
+    const listEl = document.getElementById('ahx-dir-picker-list');
+    const statusEl = document.getElementById('ahx-dir-picker-status');
+
+    if (!openBtn || !modal || !dirInput) {
+        return;
+    }
+
+    let currentPath = '';
+    let parentPath = '';
+    let isLoading = false;
+
+    function setStatus(message, isError) {
+        statusEl.textContent = message || '';
+        statusEl.style.color = isError ? '#b32d2e' : '#50575e';
+    }
+
+    function setLoadingState(loading) {
+        isLoading = !!loading;
+        openRootBtn.disabled = isLoading;
+        chooseBtn.disabled = isLoading;
+        upBtn.disabled = isLoading || !parentPath;
+    }
+
+    function renderRoots(roots) {
+        const currentValue = rootsSelect.value;
+        rootsSelect.innerHTML = '';
+        (roots || []).forEach(function(rootPath) {
+            const option = document.createElement('option');
+            option.value = rootPath;
+            option.textContent = rootPath;
+            rootsSelect.appendChild(option);
+        });
+        if (currentValue && Array.from(rootsSelect.options).some(function(o) { return o.value === currentValue; })) {
+            rootsSelect.value = currentValue;
+        }
+    }
+
+    function renderList(dirs) {
+        listEl.innerHTML = '';
+        if (!dirs || dirs.length === 0) {
+            const empty = document.createElement('li');
+            empty.textContent = 'Keine Unterverzeichnisse gefunden.';
+            empty.style.padding = '8px 6px';
+            empty.style.color = '#646970';
+            listEl.appendChild(empty);
+            return;
+        }
+
+        dirs.forEach(function(dir) {
+            const li = document.createElement('li');
+            li.style.margin = '0';
+            li.style.padding = '0';
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'button-link';
+            btn.textContent = '📁 ' + dir.name;
+            btn.style.display = 'block';
+            btn.style.padding = '6px 4px';
+            btn.style.textDecoration = 'none';
+            btn.style.width = '100%';
+            btn.style.textAlign = 'left';
+            btn.addEventListener('click', function() {
+                if (!isLoading) {
+                    loadPath(dir.path);
+                }
+            });
+
+            li.appendChild(btn);
+            listEl.appendChild(li);
+        });
+    }
+
+    function loadPath(path) {
+        setLoadingState(true);
+        setStatus('Lade Verzeichnisse…', false);
+
+        const formData = new URLSearchParams();
+        formData.append('action', 'ahx_repo_browse_dirs');
+        formData.append('nonce', browseNonce);
+        formData.append('path', path || '');
+
+        fetch(ajaxUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+            },
+            body: formData.toString(),
+            credentials: 'same-origin'
+        })
+        .then(function(response) { return response.json(); })
+        .then(function(payload) {
+            if (!payload || !payload.success || !payload.data) {
+                const msg = payload && payload.data ? String(payload.data) : 'Verzeichnisliste konnte nicht geladen werden.';
+                throw new Error(msg);
+            }
+
+            const data = payload.data;
+            currentPath = String(data.path || '');
+            parentPath = String(data.parent_path || '');
+
+            pathField.value = currentPath;
+            renderRoots(data.roots || []);
+            renderList(data.dirs || []);
+            setStatus('Verzeichnis auswählen und mit „Dieses Verzeichnis übernehmen“ bestätigen.', false);
+        })
+        .catch(function(error) {
+            setStatus(error && error.message ? error.message : 'Fehler beim Laden der Verzeichnisse.', true);
+            renderList([]);
+        })
+        .finally(function() {
+            setLoadingState(false);
+        });
+    }
+
+    function openModal() {
+        modal.style.display = 'block';
+        const initialPath = (dirInput.value || '').trim();
+        loadPath(initialPath);
+    }
+
+    function closeModal() {
+        modal.style.display = 'none';
+    }
+
+    openBtn.addEventListener('click', openModal);
+    closeBtn.addEventListener('click', closeModal);
+
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
+
+    upBtn.addEventListener('click', function() {
+        if (!isLoading && parentPath) {
+            loadPath(parentPath);
+        }
+    });
+
+    openRootBtn.addEventListener('click', function() {
+        if (!isLoading && rootsSelect.value) {
+            loadPath(rootsSelect.value);
+        }
+    });
+
+    chooseBtn.addEventListener('click', function() {
+        if (!currentPath) {
+            return;
+        }
+        dirInput.value = currentPath;
+        closeModal();
+    });
+})();
+</script>
