@@ -6,6 +6,9 @@ if (!current_user_can('manage_options')) {
 if (!function_exists('ahx_run_git_cmd') || !function_exists('ahx_find_git_binary')) {
     require_once plugin_dir_path(__FILE__) . 'commit-handler.php';
 }
+if (!function_exists('ahx_wp_github_safe_log')) {
+    require_once dirname(__DIR__) . '/includes/logging.php';
+}
 
 global $wpdb;
 $table = $wpdb->prefix . 'ahx_wp_github';
@@ -25,12 +28,11 @@ function ahx_diag_run_cmd($command, $cwd = null, $timeout = 20, $is_git_command 
     if (stripos(PHP_OS, 'WIN') === 0) {
         $cmd = 'cmd /c ' . $command;
     }
-
-    error_log('[ahx_wp_github][diagnostics] start command=' . $command . ' cwd=' . ($cwd ?: '-') . ' timeout=' . intval($timeout) . ' is_git=' . ($is_git_command ? '1' : '0'));
-
+    $logged_command = function_exists('ahx_wp_github_redact_command') ? ahx_wp_github_redact_command((string)$command) : (string)$command;
+    ahx_wp_github_safe_log('DEBUG', '[diagnostics] start command=' . $logged_command . ' cwd=' . ($cwd ?: '-') . ' timeout=' . intval($timeout) . ' is_git=' . ($is_git_command ? '1' : '0'), 'ahx_wp_github');
     $process = proc_open($cmd, $descriptors, $pipes, $cwd);
     if (!is_resource($process)) {
-        error_log('[ahx_wp_github][diagnostics] proc_open failed command=' . $command);
+        ahx_wp_github_safe_log('ERROR', '[diagnostics] proc_open failed command=' . $logged_command, 'ahx_wp_github');
         return ['exit' => -1, 'output' => 'proc_open failed'];
     }
 
@@ -77,7 +79,8 @@ function ahx_diag_run_cmd($command, $cwd = null, $timeout = 20, $is_git_command 
     proc_close($process);
 
     $snippet = substr(trim($output), 0, 2000);
-    error_log('[ahx_wp_github][diagnostics] done command=' . $command . ' exit=' . intval($exitCode) . ' timeout_hit=' . ($timedOut ? '1' : '0') . ' output=' . $snippet);
+    $logged_snippet = function_exists('ahx_wp_github_redact_command') ? ahx_wp_github_redact_command((string)$snippet) : (string)$snippet;
+    ahx_wp_github_safe_log('DEBUG', '[diagnostics] done command=' . $logged_command . ' exit=' . intval($exitCode) . ' timeout_hit=' . ($timedOut ? '1' : '0') . ' output=' . $logged_snippet, 'ahx_wp_github');
 
     return ['exit' => $exitCode, 'output' => trim($output)];
 }

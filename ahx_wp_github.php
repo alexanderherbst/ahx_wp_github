@@ -2,12 +2,19 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.7.0
+Version: v1.7.1
 Author: AHX
 */
 
 if (!defined('ABSPATH')) {
     exit;
+}
+
+require_once plugin_dir_path(__FILE__) . 'includes/logging.php';
+
+if (class_exists('AHX_Logging') && method_exists('AHX_Logging', 'get_instance')) {
+    $github_log_level = get_option('ahx_wp_github_level_of_logging', get_option('ahx_wp_main_level_of_logging_overall', 'WARNING'));
+    AHX_Logging::get_instance()->set_log_level('ahx_wp_github', $github_log_level);
 }
 
 // Plugin Aktivierung: Datenbanktabelle anlegen
@@ -125,9 +132,7 @@ function ahx_wp_github_ajax_commit() {
     if (!current_user_can('manage_options')) {
         wp_send_json_error('Keine Berechtigung');
     }
-    if (class_exists('AHX_Logging') && method_exists('AHX_Logging', 'get_instance')) {
-        AHX_Logging::get_instance()->log_debug('ajax_commit: incoming request dir=' . var_export($_POST['dir'] ?? '', true), 'ahx_wp_github');
-    }
+    ahx_wp_github_log_debug('ajax_commit: incoming request dir=' . var_export($_POST['dir'] ?? '', true));
     $nonce = $_POST['nonce'] ?? '';
     if (!wp_verify_nonce($nonce, 'ahx_repo_commit')) {
         wp_send_json_error('Ungültiger Nonce');
