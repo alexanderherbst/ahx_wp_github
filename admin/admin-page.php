@@ -316,7 +316,8 @@ ahx_wp_main_display_admin_notices();
 
             foreach ($display_rows as $entry) {
                 $row = $entry['row'];
-                echo '<tr>';
+                $row_style = intval($entry['priority']) === 0 ? ' style="background:#fff8e5;"' : '';
+                echo '<tr' . $row_style . '>';
                 echo '<td>' . esc_html($row->id) . '</td>';
                 echo '<td>' . esc_html($row->name) . '</td>';
                 echo '<td>' . esc_html($row->type) . '</td>';
