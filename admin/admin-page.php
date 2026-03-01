@@ -4,9 +4,103 @@ if (!current_user_can('manage_options')) {
     wp_die(__('Keine Berechtigung.'));
 }
 
+if (!function_exists('ahx_run_cmd_with_timeout') || !function_exists('ahx_find_git_binary')) {
+    require_once plugin_dir_path(__FILE__) . 'commit-handler.php';
+}
+
+function ahx_wp_github_admin_run_git($dir, $args, $timeout = 20, $needs_remote_auth = false) {
+    return ahx_run_git_cmd(ahx_find_git_binary(), $dir, $args, $timeout, $needs_remote_auth);
+}
+
+function ahx_wp_github_admin_is_sync_pending($dir, $git_timeout = 15) {
+    $branch_res = ahx_wp_github_admin_run_git($dir, 'rev-parse --abbrev-ref HEAD', $git_timeout);
+    if (intval($branch_res['exit'] ?? 1) !== 0) {
+        return false;
+    }
+
+    $branch = trim((string)($branch_res['output'] ?? ''));
+    if ($branch === '' || $branch === 'HEAD') {
+        return false;
+    }
+
+    $upstream_res = ahx_wp_github_admin_run_git($dir, 'rev-parse --abbrev-ref --symbolic-full-name @{u}', $git_timeout);
+    if (intval($upstream_res['exit'] ?? 1) === 0 && trim((string)($upstream_res['output'] ?? '')) !== '') {
+        $ahead_res = ahx_wp_github_admin_run_git($dir, 'rev-list --left-right --count @{u}...HEAD', $git_timeout);
+        if (intval($ahead_res['exit'] ?? 1) !== 0) {
+            return false;
+        }
+        $parts = preg_split('/\s+/', trim((string)($ahead_res['output'] ?? '')));
+        $ahead = isset($parts[1]) ? intval($parts[1]) : 0;
+        return $ahead > 0;
+    }
+
+    $ahead_main_res = ahx_wp_github_admin_run_git($dir, 'rev-list --count main..HEAD', $git_timeout);
+    if (intval($ahead_main_res['exit'] ?? 1) !== 0) {
+        return false;
+    }
+    return intval(trim((string)($ahead_main_res['output'] ?? '0'))) > 0;
+}
+
+function ahx_wp_github_admin_count_untracked_empty_dirs($dir, $git_timeout = 15) {
+    $count = 0;
+    $root = realpath($dir);
+    if ($root === false || !is_dir($root)) {
+        return 0;
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        if (!$item->isDir()) {
+            continue;
+        }
+
+        $abs = $item->getPathname();
+        $normalized = str_replace('\\', '/', $abs);
+        if (preg_match('#(^|/)\.git(/|$)#', $normalized)) {
+            continue;
+        }
+
+        $entries = @scandir($abs);
+        if ($entries === false) {
+            continue;
+        }
+
+        $visible = array_values(array_filter($entries, function($entry) {
+            return $entry !== '.' && $entry !== '..';
+        }));
+        if (count($visible) !== 0) {
+            continue;
+        }
+
+        $rel = ltrim(str_replace('\\', '/', substr($abs, strlen($root))), '/');
+        if ($rel === '') {
+            continue;
+        }
+
+        $ignore_res = ahx_wp_github_admin_run_git($root, 'check-ignore -q -- ' . escapeshellarg($rel . '/'), $git_timeout, false);
+        if (intval($ignore_res['exit'] ?? 1) === 0) {
+            continue;
+        }
+
+        $count++;
+    }
+
+    return $count;
+}
+
 // Änderungen-Ansicht einbinden, falls gewünscht, und sofort beenden
 if (isset($_GET['repo_changes']) && $_GET['repo_changes'] == 1 && isset($_GET['dir'])) {
     require_once plugin_dir_path(__FILE__) . 'repo-changes.php';
+    return;
+}
+
+// Details-Ansicht einbinden, falls gewünscht, und sofort beenden
+if (isset($_GET['repo_details']) && $_GET['repo_details'] == 1 && isset($_GET['dir'])) {
+    require_once plugin_dir_path(__FILE__) . 'repo-details.php';
     return;
 }
 
@@ -36,10 +130,9 @@ if (isset($_POST['ahx_github_dir_submit'])) {
             // Prüfen, ob .git existiert, sonst initialisieren
             if (!is_dir($dir . DIRECTORY_SEPARATOR . '.git')) {
                 // Git initialisieren
-                $cmd = 'git init "' . $dir . '"';
-                exec($cmd);
+                ahx_wp_github_admin_run_git($dir, 'init', 20, false);
             }
-            $wpdb->insert($table, ['name' => $name, 'dir_path' => $dir, 'type' => $type]);
+            $wpdb->insert($table, ['name' => $name, 'dir_path' => $dir, 'type' => $type, 'safe_directory' => 0]);
             echo '<div class="updated"><p>Verzeichnis gespeichert und ggf. als Git-Repo initialisiert.</p></div>';
         } else {
             echo '<div class="error"><p>Verzeichnis ist bereits erfasst.</p></div>';
@@ -48,6 +141,52 @@ if (isset($_POST['ahx_github_dir_submit'])) {
         echo '<div class="error"><p>Ungültiges Verzeichnis.</p></div>';
     }
 }
+
+// Handle one-click sync from list view
+if (isset($_POST['ahx_repo_sync_submit']) && current_user_can('manage_options')) {
+    if (!isset($_POST['ahx_repo_sync_nonce']) || !wp_verify_nonce($_POST['ahx_repo_sync_nonce'], 'ahx_repo_sync')) {
+        echo '<div class="error"><p>Ungültiger Nonce.</p></div>';
+    } else {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ahx_wp_github';
+        $repo_id = intval($_POST['repo_id'] ?? 0);
+        $repo = $wpdb->get_row($wpdb->prepare("SELECT id, name, dir_path FROM $table WHERE id = %d", $repo_id));
+
+        if (!$repo || !is_dir($repo->dir_path) || !is_dir($repo->dir_path . DIRECTORY_SEPARATOR . '.git')) {
+            echo '<div class="error"><p>Ungültiges Repository für Sync.</p></div>';
+        } else {
+            $git_timeout = intval(get_option('ahx_wp_github_git_timeout_seconds', 15));
+            if ($git_timeout < 5) $git_timeout = 15;
+            if ($git_timeout > 120) $git_timeout = 120;
+
+            $branch_res = ahx_wp_github_admin_run_git($repo->dir_path, 'rev-parse --abbrev-ref HEAD', $git_timeout);
+            $branch = trim((string)($branch_res['output'] ?? ''));
+
+            if (intval($branch_res['exit'] ?? 1) !== 0 || $branch === '' || $branch === 'HEAD') {
+                echo '<div class="error"><p>Aktueller Branch konnte nicht bestimmt werden.</p></div>';
+            } else {
+                $upstream_res = ahx_wp_github_admin_run_git($repo->dir_path, 'rev-parse --abbrev-ref --symbolic-full-name @{u}', $git_timeout);
+                $has_upstream = intval($upstream_res['exit'] ?? 1) === 0 && trim((string)($upstream_res['output'] ?? '')) !== '';
+
+                if ($has_upstream) {
+                    $push_res = ahx_wp_github_admin_run_git($repo->dir_path, 'push --force-with-lease', max(20, $git_timeout), true);
+                } else {
+                    $push_res = ahx_wp_github_admin_run_git($repo->dir_path, 'push --set-upstream origin ' . escapeshellarg($branch), max(20, $git_timeout), true);
+                }
+
+                if (intval($push_res['exit'] ?? 1) === 0) {
+                    echo '<div class="updated"><p>Sync erfolgreich für Repository: ' . esc_html($repo->name) . '.</p></div>';
+                } else {
+                    $msg = trim((string)($push_res['output'] ?? ''));
+                    if ($msg === '') $msg = 'Unbekannter Fehler beim Sync.';
+                    echo '<div class="error"><p>Sync fehlgeschlagen: ' . esc_html(substr($msg, 0, 500)) . '</p></div>';
+                }
+            }
+        }
+    }
+}
+
+ahx_wp_main_display_admin_notices();
 ?>
 <div class="wrap">
     <h1>AHX WP GitHub</h1>
@@ -60,7 +199,7 @@ if (isset($_POST['ahx_github_dir_submit'])) {
     <h2>Erfasste Verzeichnisse</h2>
     <table class="widefat">
         <thead>
-            <tr><th>ID</th><th>Name</th><th>Typ</th><th>Verzeichnis</th><th>Erfasst am</th><th>Änderungen</th><th></th></tr>
+            <tr><th>ID</th><th>Name</th><th>Typ</th><th>Verzeichnis</th><th>Erfasst am</th><th>Änderungen</th></tr>
         </thead>
         <tbody>
         <?php
@@ -74,13 +213,28 @@ if (isset($_POST['ahx_github_dir_submit'])) {
                 $git_dir = $row->dir_path . DIRECTORY_SEPARATOR . '.git';
                 $btn_changes = '';
                 if (is_dir($git_dir)) {
-                    $status = shell_exec('cd "' . $row->dir_path . '" && git status --porcelain');
-                    $lines = array_filter(explode("\n", (string) $status));
+                    $git_timeout = intval(get_option('ahx_wp_github_git_timeout_seconds', 15));
+                    if ($git_timeout < 5) $git_timeout = 15;
+                    if ($git_timeout > 120) $git_timeout = 120;
+
+                    $res = ahx_wp_github_admin_run_git($row->dir_path, 'status --porcelain', $git_timeout);
+                    $exit_code = intval($res['exit'] ?? 1);
+                    $status = trim((string)($res['output'] ?? ''));
+                    $lines = $status !== '' ? array_filter(preg_split('/\r\n|\r|\n/', $status)) : [];
                     $count = count($lines);
-                    if ($count > 0) {
-                        $btn_changes = '<a href="' . esc_url($changes_url) . '" class="button" title="Änderungsdetails anzeigen">' . $count . ' Änderung' . ($count > 1 ? 'en' : '') . '</a>';
-                    } else {
-                        $btn_changes = '';
+                    $empty_dir_count = ahx_wp_github_admin_count_untracked_empty_dirs($row->dir_path, $git_timeout);
+                    $total_count = $count + $empty_dir_count;
+
+                    if ($exit_code === 0 && $total_count > 0) {
+                        $btn_changes = '<a href="' . esc_url($changes_url) . '" class="button" title="Änderungsdetails anzeigen">' . $total_count . ' Änderung' . ($total_count > 1 ? 'en' : '') . '</a>';
+                    } elseif ($exit_code === 0 && $total_count === 0 && ahx_wp_github_admin_is_sync_pending($row->dir_path, $git_timeout)) {
+                        $btn_changes = '<form method="post" style="display:inline; margin:0;">';
+                        $btn_changes .= wp_nonce_field('ahx_repo_sync', 'ahx_repo_sync_nonce', true, false);
+                        $btn_changes .= '<input type="hidden" name="repo_id" value="' . intval($row->id) . '">';
+                        $btn_changes .= '<button type="submit" name="ahx_repo_sync_submit" value="1" class="button button-primary" title="Ausstehenden Sync durchführen" onclick="return confirm(\'Möchten Sie den ausstehenden Sync jetzt durchführen?\');">Sync</button>';
+                        $btn_changes .= '</form>';
+                    } elseif ($exit_code !== 0) {
+                        $btn_changes = '<span title="Git-Status konnte nicht gelesen werden" style="color:#b32d2e;">Statusfehler</span>';
                     }
                 } else {
                     $btn_changes = '';
@@ -95,22 +249,11 @@ if (isset($_POST['ahx_github_dir_submit'])) {
                 echo '</tr>';
             }
         } else {
-            echo '<tr><td colspan="7">Keine Einträge gefunden.</td></tr>';
+            echo '<tr><td colspan="6">Keine Einträge gefunden.</td></tr>';
         }
         ?>
         </tbody>
     </table>
 
 <?php
-// Details-Ansicht einbinden, falls gewünscht
-if (isset($_GET['repo_details']) && $_GET['repo_details'] == 1 && isset($_GET['dir'])) {
-    require_once plugin_dir_path(__FILE__) . 'repo-details.php';
-}
-// Änderungen-Ansicht einbinden, falls gewünscht
-if (isset($_GET['repo_changes']) && $_GET['repo_changes'] == 1 && isset($_GET['dir'])) {
-    require_once plugin_dir_path(__FILE__) . 'repo-changes.php';
-    return;
-}
-else {
-    echo "</div>";
-}
+echo "</div>";

@@ -18,6 +18,14 @@ function ahx_wp_github_register_settings() {
     add_settings_field('ahx_wp_github_prefer_api', 'Push via GitHub API bevorzugen', 'ahx_wp_github_prefer_api_checkbox', 'ahx_wp_github_settings', 'ahx_wp_github_logging');
     register_setting('ahx_wp_github_settings_group', 'ahx_wp_github_prefer_api');
 
+    // Git command timeout for diagnostics and guarded git calls
+    add_settings_field('ahx_wp_github_git_timeout_seconds', 'Git Timeout (Sekunden)', 'ahx_wp_github_git_timeout_seconds_input', 'ahx_wp_github_settings', 'ahx_wp_github_logging');
+    register_setting('ahx_wp_github_settings_group', 'ahx_wp_github_git_timeout_seconds', [
+        'type' => 'integer',
+        'sanitize_callback' => 'ahx_wp_github_sanitize_git_timeout_seconds',
+        'default' => 15,
+    ]);
+
 }
 add_action('admin_init', 'ahx_wp_github_register_settings');
 
@@ -32,6 +40,20 @@ function ahx_wp_github_prefer_api_checkbox() {
     $checked = ($val === '1' || $val === 1 || $val === true) ? 'checked' : '';
     echo '<input type="checkbox" name="ahx_wp_github_prefer_api" value="1" ' . $checked . '> Push via GitHub API (wenn Token vorhanden)';
     echo '<p class="description">Wenn aktiviert, versucht das Plugin bevorzugt die GitHub API mit dem in AHX Main gespeicherten Token zu verwenden. Fallback auf lokales <code>git push</code> nur, wenn API nicht möglich.</p>';
+}
+
+function ahx_wp_github_sanitize_git_timeout_seconds($value) {
+    $seconds = intval($value);
+    if ($seconds < 5) $seconds = 5;
+    if ($seconds > 120) $seconds = 120;
+    return $seconds;
+}
+
+function ahx_wp_github_git_timeout_seconds_input() {
+    $val = intval(get_option('ahx_wp_github_git_timeout_seconds', 15));
+    if ($val < 5) $val = 15;
+    echo '<input type="number" min="5" max="120" step="1" name="ahx_wp_github_git_timeout_seconds" value="' . esc_attr((string) $val) . '" style="width:100px;">';
+    echo '<p class="description">Timeout für Git-Befehle in Sekunden (Standard: 15). Git-Prozesse werden nach Ablauf automatisch beendet.</p>';
 }
 
 ?>
