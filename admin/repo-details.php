@@ -193,7 +193,6 @@ if (isset($_POST['ahx_repo_branch_action_submit']) && current_user_can('manage_o
 ahx_wp_main_display_admin_notices();
 
 // Git-Infos auslesen
-$info = [];
 $git_user_name_current = '';
 $git_user_email_current = '';
 $current_branch = '';
@@ -206,15 +205,6 @@ if ($has_git_repo) {
     $branch_res = ahx_run_git_cmd($git_bin, $dir, 'rev-parse --abbrev-ref HEAD', 20, false);
     $branch = trim((string)($branch_res['output'] ?? ''));
     $current_branch = $branch;
-    $info['Branch'] = $branch;
-    // Letzter Commit
-    $commit_res = ahx_run_git_cmd($git_bin, $dir, 'log -1 --pretty=format:"%h %s (%ci)"', 20, false);
-    $commit = trim((string)($commit_res['output'] ?? ''));
-    $info['Letzter Commit'] = $commit;
-    // Remote
-    $remote_res = ahx_run_git_cmd($git_bin, $dir, 'remote -v', 20, false);
-    $remote = trim((string)($remote_res['output'] ?? ''));
-    $info['Remote'] = $remote ?: 'Kein Remote hinterlegt';
 
     $user_name_res = ahx_run_git_cmd($git_bin, $dir, 'config --get user.name', 20, false);
     $git_user_name_current = trim((string)($user_name_res['output'] ?? ''));
@@ -272,8 +262,6 @@ if ($has_git_repo) {
             ];
         }
     }
-} else {
-    $info['Fehler'] = 'Kein Git-Repository gefunden.';
 }
 
 $back_url = admin_url('admin.php?page=ahx-wp-github');
@@ -408,12 +396,6 @@ $back_url = admin_url('admin.php?page=ahx-wp-github');
         <?php endif; ?>
     <?php endif; ?>
 
-    <table class="widefat">
-        <tbody>
-        <?php foreach ($info as $k => $v) {
-            echo '<tr><th>' . esc_html($k) . '</th><td><pre>' . esc_html($v) . '</pre></td></tr>';
-        } ?>
-        </tbody>
-    </table>
+    <hr />
     <p><a href="<?php echo esc_url($back_url); ?>" class="button">Zurück</a></p>
 </div>
