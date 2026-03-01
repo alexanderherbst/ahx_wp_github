@@ -274,6 +274,37 @@ function ahx_wp_github_finalize_rebase_failure($git_bin, $dir, &$resp, $rebase_o
     );
 }
 
+function ahx_wp_github_try_force_with_lease_after_rebase_conflict($git_bin, $dir, $branch, $has_upstream, &$resp) {
+    $branch = trim((string)$branch);
+    if ($branch === '' || $branch === 'HEAD') {
+        return false;
+    }
+
+    $push_cmd = $has_upstream
+        ? 'push --force-with-lease'
+        : ('push --force-with-lease --set-upstream origin ' . escapeshellarg($branch));
+
+    ahx_wp_github_log_debug('force-with-lease fallback start cmd=' . $push_cmd);
+    $res_force = ahx_run_git_cmd($git_bin, $dir, $push_cmd, 45, true);
+    $resp['force_push_used'] = true;
+    $resp['force_push_output'] = (string)($res_force['output'] ?? '');
+    $ok = intval($res_force['exit'] ?? 1) === 0;
+
+    if ($ok) {
+        $resp['success'] = true;
+        $resp['push_output'] = $resp['force_push_output'];
+        $resp['message'] = 'Rebase-Konflikt erkannt; Sync wurde mit force-with-lease durchgeführt.';
+        ahx_wp_github_log_debug('force-with-lease fallback success');
+        return true;
+    }
+
+    $excerpt = trim(mb_substr($resp['force_push_output'], 0, 800));
+    $resp['success'] = false;
+    $resp['message'] = 'Rebase-Konflikt und Force-with-lease fehlgeschlagen.' . ($excerpt !== '' ? ' ' . $excerpt : '');
+    ahx_wp_github_log_debug('force-with-lease fallback failed output=' . mb_substr($resp['force_push_output'], 0, 1500));
+    return false;
+}
+
 function ahx_prepare_empty_dirs_for_git($git_bin, $dir, $timeout = 20) {
     $created = [];
     $root = realpath($dir);
@@ -455,6 +486,9 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
 
     $commit_msg = trim($post_data['commit_message'] ?? '');
     $action = $post_data['commit_action'] ?? 'commit';
+    $allow_force_with_lease_on_rebase_conflict = !empty($post_data['allow_force_with_lease_on_rebase_conflict'])
+        && in_array((string)$post_data['allow_force_with_lease_on_rebase_conflict'], ['1', 'true', 'on', 'yes'], true);
+    ahx_wp_github_log_debug('commit.request option allow_force_with_lease_on_rebase_conflict=' . ($allow_force_with_lease_on_rebase_conflict ? '1' : '0'));
     if ($commit_msg === '') {
         $resp['message'] = 'Empty commit message';
         ahx_wp_github_log_debug('commit.request abort: empty commit message');
@@ -669,6 +703,9 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                                     (string)($rebase_res['output'] ?? ''),
                                     'Sync fehlgeschlagen: Rebase mit Remote konnte nicht durchgeführt werden.'
                                 );
+                                if ($allow_force_with_lease_on_rebase_conflict) {
+                                    ahx_wp_github_try_force_with_lease_after_rebase_conflict($git_for_up, $dir, $branch, true, $resp);
+                                }
                                 $can_push = false;
                                 ahx_wp_github_log_debug('commit_sync rebase failed; push skipped');
                             }
@@ -699,6 +736,9 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                                     (string)($rebase_res['output'] ?? ''),
                                     'Sync fehlgeschlagen: Rebase mit bestehendem Remote-Branch konnte nicht durchgeführt werden.'
                                 );
+                                if ($allow_force_with_lease_on_rebase_conflict) {
+                                    ahx_wp_github_try_force_with_lease_after_rebase_conflict($git_for_up, $dir, $branch, false, $resp);
+                                }
                                 $can_push = false;
                                 ahx_wp_github_log_debug('commit_sync rebase failed for existing remote branch; push skipped');
                             }

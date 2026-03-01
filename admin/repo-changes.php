@@ -447,8 +447,14 @@ if (isset($_POST['commit_action'])) {
                 <label style="margin-left:16px;"><input type="radio" name="version_bump" value="minor"> Minor (<?php echo esc_html($header_version_disp . ' ⇒ ' . $v_minor); ?>)</label>
                 <label style="margin-left:16px;"><input type="radio" name="version_bump" value="major"> Major (<?php echo esc_html($header_version_disp . ' ⇒ ' . $v_major); ?>)</label>
             </fieldset>
+            <p style="margin:10px 0;">
+                <label style="display:inline-flex;align-items:center;gap:6px;">
+                    <input type="checkbox" name="allow_force_with_lease_on_rebase_conflict" value="1">
+                    Bei Rebase-Konflikt automatisch <code>push --force-with-lease</code> versuchen
+                </label>
+            </p>
             <button type="submit" name="commit_action" value="commit" class="button button-primary" onclick="return confirm('Möchten Sie den Commit jetzt ausführen?');">Commit ausführen</button>
-            <button type="submit" name="commit_action" value="commit_sync" class="button button-primary" style="margin-left:12px;" onclick="return confirm('Möchten Sie Commit und anschließenden Sync jetzt ausführen?');">Commit &amp; Sync</button>
+            <button type="submit" name="commit_action" value="commit_sync" class="button button-primary" style="margin-left:12px;" onclick="if(!confirm('Möchten Sie Commit und anschließenden Sync jetzt ausführen?')) return false; var forceCb=this.form.querySelector('input[name=\'allow_force_with_lease_on_rebase_conflict\']'); if(forceCb && forceCb.checked){ return confirm('Warnung: Bei Rebase-Konflikt wird force-with-lease versucht. Dadurch kann Remote-Historie überschrieben werden. Fortfahren?'); } return true;">Commit &amp; Sync</button>
         </form>
     <?php endif; ?>
 
