@@ -596,6 +596,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                     $upstream_res = ahx_run_git_cmd($git_for_up, $dir, 'rev-parse --abbrev-ref --symbolic-full-name @{u}', 20, false);
                     $has_upstream = intval($upstream_res['exit'] ?? 1) === 0 && trim((string)($upstream_res['output'] ?? '')) !== '';
                     ahx_wp_github_log_debug('commit_sync upstream=' . ($has_upstream ? trim((string)$upstream_res['output']) : 'none'));
+                    $can_push = true;
 
                     if ($has_upstream) {
                         $ahead_behind_res = ahx_run_git_cmd($git_for_up, $dir, 'rev-list --left-right --count @{u}...HEAD', 20, false);
@@ -615,12 +616,13 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
                                 $resp['push_output'] = $resp['rebase_output'];
                                 $resp['message'] = 'Sync fehlgeschlagen: Rebase mit Remote konnte nicht durchgeführt werden (möglicher Konflikt).';
                                 $resp['success'] = false;
+                                $can_push = false;
                                 ahx_wp_github_log_debug('commit_sync rebase failed; push skipped');
                             }
                         }
                     }
 
-                    if (!isset($resp['success']) || $resp['success'] !== false) {
+                    if ($can_push) {
                         if ($has_upstream) {
                             $push_cmd = 'push --force-with-lease';
                         } else {

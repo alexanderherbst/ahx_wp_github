@@ -34,11 +34,23 @@ function ahx_wp_github_admin_is_sync_pending($dir, $git_timeout = 15) {
         return $ahead > 0;
     }
 
-    $ahead_main_res = ahx_wp_github_admin_run_git($dir, 'rev-list --count main..HEAD', $git_timeout);
-    if (intval($ahead_main_res['exit'] ?? 1) !== 0) {
-        return false;
+    // Kein Upstream: wenn ein origin-Remote existiert, ist ein initialer Publish/Sync wahrscheinlich nötig.
+    $origin_res = ahx_wp_github_admin_run_git($dir, 'remote get-url origin', $git_timeout);
+    if (intval($origin_res['exit'] ?? 1) === 0 && trim((string)($origin_res['output'] ?? '')) !== '') {
+        return true;
     }
-    return intval(trim((string)($ahead_main_res['output'] ?? '0'))) > 0;
+
+    $ahead_main_res = ahx_wp_github_admin_run_git($dir, 'rev-list --count main..HEAD', $git_timeout);
+    if (intval($ahead_main_res['exit'] ?? 1) === 0) {
+        return intval(trim((string)($ahead_main_res['output'] ?? '0'))) > 0;
+    }
+
+    $ahead_master_res = ahx_wp_github_admin_run_git($dir, 'rev-list --count master..HEAD', $git_timeout);
+    if (intval($ahead_master_res['exit'] ?? 1) === 0) {
+        return intval(trim((string)($ahead_master_res['output'] ?? '0'))) > 0;
+    }
+
+    return false;
 }
 
 function ahx_wp_github_admin_count_untracked_empty_dirs($dir, $git_timeout = 15) {
