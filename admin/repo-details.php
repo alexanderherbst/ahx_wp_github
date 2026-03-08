@@ -3,6 +3,17 @@ if (!current_user_can('manage_options')) {
     wp_die(__('Keine Berechtigung.'));
 }
 
+if (!function_exists('ahx_wp_github_is_github_remote_url')) {
+    function ahx_wp_github_is_github_remote_url($remote_url) {
+        $remote_url = trim((string)$remote_url);
+        if ($remote_url === '') {
+            return false;
+        }
+
+        return preg_match('#^(https?://([^/@]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:|git://github\.com/)#i', $remote_url) === 1;
+    }
+}
+
 $dir = isset($_GET['dir']) ? sanitize_text_field(wp_unslash($_GET['dir'])) : '';
 if (!$dir || !is_dir($dir)) {
     echo '<div class="error"><p>Ungültiges oder nicht vorhandenes Verzeichnis.</p></div>';
@@ -39,6 +50,12 @@ if (!$repo_row) {
 
 $git_dir = $dir . DIRECTORY_SEPARATOR . '.git';
 $has_git_repo = is_dir($git_dir);
+$remote_policy = (string)get_option('ahx_wp_github_remote_policy', 'all');
+if ($remote_policy !== 'github_only' && $remote_policy !== 'all') {
+    $remote_policy = 'all';
+}
+$remote_policy_label = $remote_policy === 'github_only' ? 'Nur github.com-Remotes' : 'Generisch (alle Git-Remotes)';
+
 $git_bin = '';
 if ($has_git_repo) {
     if (!function_exists('ahx_run_git_cmd') || !function_exists('ahx_find_git_binary')) {
@@ -56,12 +73,58 @@ if (isset($_POST['ahx_repo_settings_submit']) && current_user_can('manage_option
     } else {
         $saved_any = false;
         $reset_identity = sanitize_text_field(wp_unslash($_POST['ahx_git_identity_reset'] ?? '')) === '1';
+        $remove_remote = sanitize_text_field(wp_unslash($_POST['ahx_git_remote_remove'] ?? '')) === '1';
 
         $safe = isset($_POST['safe_directory']) ? 1 : 0;
         $wpdb->update($table, ['safe_directory' => $safe], ['id' => intval($repo_row->id)]);
         $saved_any = true;
 
         if ($has_git_repo && $git_bin !== '') {
+            $remote_url_input = trim((string)wp_unslash($_POST['git_remote_origin_url'] ?? ''));
+
+            if ($remove_remote) {
+                $check_origin_res = ahx_run_git_cmd($git_bin, $dir, 'remote get-url origin', 20, false);
+                if (intval($check_origin_res['exit'] ?? 1) === 0) {
+                    $remove_origin_res = ahx_run_git_cmd($git_bin, $dir, 'remote remove origin', 20, false);
+                    if (intval($remove_origin_res['exit'] ?? 1) === 0) {
+                        $saved_any = true;
+                        ahx_wp_main_add_notice('Remote origin wurde entfernt.', 'success');
+                    } else {
+                        $msg = trim((string)($remove_origin_res['output'] ?? ''));
+                        ahx_wp_main_add_notice('Remote origin konnte nicht entfernt werden: ' . ($msg !== '' ? mb_substr($msg, 0, 300) : 'Unbekannter Fehler'), 'error');
+                    }
+                } else {
+                    ahx_wp_main_add_notice('Es ist kein Remote origin konfiguriert.', 'success');
+                }
+            } elseif ($remote_url_input !== '') {
+                if (preg_match('/\s/', $remote_url_input)) {
+                    ahx_wp_main_add_notice('Remote-URL ist ungültig (Leerzeichen nicht erlaubt).', 'error');
+                } elseif ($remote_policy === 'github_only' && !ahx_wp_github_is_github_remote_url($remote_url_input)) {
+                    ahx_wp_main_add_notice('Remote-URL ist laut Konfiguration nicht erlaubt. Aktuell sind nur github.com-Remotes zugelassen.', 'error');
+                } else {
+                    $check_origin_res = ahx_run_git_cmd($git_bin, $dir, 'remote get-url origin', 20, false);
+                    if (intval($check_origin_res['exit'] ?? 1) === 0) {
+                        $set_origin_res = ahx_run_git_cmd($git_bin, $dir, 'remote set-url origin ' . escapeshellarg($remote_url_input), 20, false);
+                        if (intval($set_origin_res['exit'] ?? 1) === 0) {
+                            $saved_any = true;
+                            ahx_wp_main_add_notice('Remote origin wurde aktualisiert.', 'success');
+                        } else {
+                            $msg = trim((string)($set_origin_res['output'] ?? ''));
+                            ahx_wp_main_add_notice('Remote origin konnte nicht aktualisiert werden: ' . ($msg !== '' ? mb_substr($msg, 0, 300) : 'Unbekannter Fehler'), 'error');
+                        }
+                    } else {
+                        $add_origin_res = ahx_run_git_cmd($git_bin, $dir, 'remote add origin ' . escapeshellarg($remote_url_input), 20, false);
+                        if (intval($add_origin_res['exit'] ?? 1) === 0) {
+                            $saved_any = true;
+                            ahx_wp_main_add_notice('Remote origin wurde hinzugefügt.', 'success');
+                        } else {
+                            $msg = trim((string)($add_origin_res['output'] ?? ''));
+                            ahx_wp_main_add_notice('Remote origin konnte nicht hinzugefügt werden: ' . ($msg !== '' ? mb_substr($msg, 0, 300) : 'Unbekannter Fehler'), 'error');
+                        }
+                    }
+                }
+            }
+
             if ($reset_identity) {
                 $unset_name_res = ahx_run_git_cmd($git_bin, $dir, 'config --unset-all user.name', 20, false);
                 $unset_email_res = ahx_run_git_cmd($git_bin, $dir, 'config --unset-all user.email', 20, false);
@@ -197,6 +260,7 @@ ahx_wp_main_display_admin_notices();
 // Git-Infos auslesen
 $git_user_name_current = '';
 $git_user_email_current = '';
+$origin_remote_url_current = '';
 $current_branch = '';
 $default_branch = '';
 $local_branches = [];
@@ -212,6 +276,11 @@ if ($has_git_repo) {
     $git_user_name_current = trim((string)($user_name_res['output'] ?? ''));
     $user_email_res = ahx_run_git_cmd($git_bin, $dir, 'config --get user.email', 20, false);
     $git_user_email_current = trim((string)($user_email_res['output'] ?? ''));
+
+    $origin_url_res = ahx_run_git_cmd($git_bin, $dir, 'remote get-url origin', 20, false);
+    if (intval($origin_url_res['exit'] ?? 1) === 0) {
+        $origin_remote_url_current = trim((string)($origin_url_res['output'] ?? ''));
+    }
 
     $default_branch_res = ahx_run_git_cmd($git_bin, $dir, 'symbolic-ref refs/remotes/origin/HEAD', 20, false);
     if (intval($default_branch_res['exit'] ?? 1) === 0) {
@@ -296,6 +365,14 @@ $back_url = admin_url('admin.php?page=ahx-wp-github');
                         <input type="email" id="git_user_email" name="git_user_email" class="regular-text" value="<?php echo esc_attr($git_user_email_current); ?>" <?php echo $has_git_repo ? '' : 'disabled'; ?> />
                     </td>
                 </tr>
+                <tr>
+                    <th scope="row"><label for="git_remote_origin_url">Remote origin</label></th>
+                    <td>
+                        <input type="text" id="git_remote_origin_url" name="git_remote_origin_url" class="regular-text" value="<?php echo esc_attr($origin_remote_url_current); ?>" placeholder="https://github.com/owner/repo.git" <?php echo $has_git_repo ? '' : 'disabled'; ?> />
+                        <p class="description">Setzt oder aktualisiert <code>origin</code> für dieses Repository.</p>
+                        <p class="description"><strong>Aktuelle Remote-Policy:</strong> <?php echo esc_html($remote_policy_label); ?> (änderbar unter „AHX WP GitHub → Einstellungen“).</p>
+                    </td>
+                </tr>
             </table>
             <?php if (!$has_git_repo): ?>
                 <p><em>Git-Benutzerdaten können erst gesetzt werden, wenn ein Git-Repository vorhanden ist.</em></p>
@@ -303,6 +380,7 @@ $back_url = admin_url('admin.php?page=ahx-wp-github');
             <p>
                 <button type="submit" class="button button-primary">Speichern</button>
                 <button type="submit" name="ahx_git_identity_reset" value="1" class="button" <?php echo $has_git_repo ? '' : 'disabled'; ?> style="margin-left:8px;" onclick="return confirm('Möchten Sie git user.name und git user.email für dieses Repository wirklich zurücksetzen?');">user.name / user.email zurücksetzen</button>
+                <button type="submit" name="ahx_git_remote_remove" value="1" class="button" <?php echo $has_git_repo ? '' : 'disabled'; ?> style="margin-left:8px;" onclick="return confirm('Möchten Sie den Remote origin für dieses Repository wirklich entfernen?');">origin entfernen</button>
             </p>
         </form>
     <?php endif; ?>

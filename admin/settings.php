@@ -30,6 +30,14 @@ function ahx_wp_github_register_settings() {
         'default' => 15,
     ]);
 
+    // Remote URL policy
+    add_settings_field('ahx_wp_github_remote_policy', 'Erlaubte Remote-URLs', 'ahx_wp_github_remote_policy_select', 'ahx_wp_github_settings', 'ahx_wp_github_logging');
+    register_setting('ahx_wp_github_settings_group', 'ahx_wp_github_remote_policy', [
+        'type' => 'string',
+        'sanitize_callback' => 'ahx_wp_github_sanitize_remote_policy',
+        'default' => 'all',
+    ]);
+
 }
 add_action('admin_init', 'ahx_wp_github_register_settings');
 
@@ -53,11 +61,32 @@ function ahx_wp_github_sanitize_git_timeout_seconds($value) {
     return $seconds;
 }
 
+function ahx_wp_github_sanitize_remote_policy($value) {
+    $value = sanitize_key((string)$value);
+    if ($value !== 'github_only' && $value !== 'all') {
+        return 'all';
+    }
+    return $value;
+}
+
 function ahx_wp_github_git_timeout_seconds_input() {
     $val = intval(get_option('ahx_wp_github_git_timeout_seconds', 15));
     if ($val < 5) $val = 15;
     echo '<input type="number" min="5" max="120" step="1" name="ahx_wp_github_git_timeout_seconds" value="' . esc_attr((string) $val) . '" style="width:100px;">';
     echo '<p class="description">Timeout für Git-Befehle in Sekunden (Standard: 15). Git-Prozesse werden nach Ablauf automatisch beendet.</p>';
+}
+
+function ahx_wp_github_remote_policy_select() {
+    $policy = (string)get_option('ahx_wp_github_remote_policy', 'all');
+    if ($policy !== 'github_only' && $policy !== 'all') {
+        $policy = 'all';
+    }
+
+    echo '<select name="ahx_wp_github_remote_policy">';
+    echo '<option value="all"' . selected($policy, 'all', false) . '>Generisch (alle Git-Remotes)</option>';
+    echo '<option value="github_only"' . selected($policy, 'github_only', false) . '>Nur github.com-Remotes</option>';
+    echo '</select>';
+    echo '<p class="description">Steuert, welche Remote-URLs beim Setzen von <code>origin</code> in den Repository-Details akzeptiert werden.</p>';
 }
 
 ?>

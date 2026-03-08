@@ -104,14 +104,27 @@ function ahx_wp_github_admin_count_untracked_empty_dirs($dir, $git_timeout = 15)
     return $count;
 }
 
+function ahx_wp_github_admin_normalize_version_value($raw) {
+    $raw = trim((string)$raw);
+    if ($raw === '') {
+        return '';
+    }
+
+    if (preg_match('/\bv?(\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?)\b/i', $raw, $m)) {
+        return 'v' . $m[1];
+    }
+
+    return '';
+}
+
 function ahx_wp_github_admin_get_repo_version($dir, $name = '') {
     $version_txt = rtrim((string)$dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'version.txt';
     if (is_file($version_txt) && is_readable($version_txt)) {
         $txt = @file_get_contents($version_txt);
         if ($txt !== false) {
-            $ver = trim((string)$txt);
+            $ver = ahx_wp_github_admin_normalize_version_value($txt);
             if ($ver !== '') {
-                return preg_match('/^v/i', $ver) ? $ver : ('v' . $ver);
+                return $ver;
             }
         }
     }
@@ -121,8 +134,22 @@ function ahx_wp_github_admin_get_repo_version($dir, $name = '') {
         $main_file = rtrim((string)$dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $name . '.php';
         if (is_file($main_file) && is_readable($main_file)) {
             $header = @file_get_contents($main_file);
-            if ($header !== false && preg_match('/Version:\s*v?(\d+\.\d+\.\d+)/mi', $header, $m)) {
-                return 'v' . $m[1];
+            if ($header !== false && preg_match('/Version:\s*([^\r\n]+)/mi', $header, $m)) {
+                $ver = ahx_wp_github_admin_normalize_version_value($m[1]);
+                if ($ver !== '') {
+                    return $ver;
+                }
+            }
+        }
+    }
+
+    $style_css = rtrim((string)$dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'style.css';
+    if (is_file($style_css) && is_readable($style_css)) {
+        $style_header = @file_get_contents($style_css);
+        if ($style_header !== false && preg_match('/Version:\s*([^\r\n]+)/mi', $style_header, $m)) {
+            $ver = ahx_wp_github_admin_normalize_version_value($m[1]);
+            if ($ver !== '') {
+                return $ver;
             }
         }
     }
