@@ -23,6 +23,35 @@ function ahx_wp_github_repo_changes_git($dir, $args, $timeout = 20) {
     return ahx_run_git_cmd(ahx_find_git_binary(), $dir, $args, $timeout, false);
 }
 
+function ahx_wp_github_repo_changes_diff_untracked_file($dir, $relative_file, $timeout = 20) {
+    $relative_file = trim((string)$relative_file);
+    if ($relative_file === '') {
+        return '';
+    }
+
+    $absolute_file = $dir . DIRECTORY_SEPARATOR . $relative_file;
+    if (!is_file($absolute_file)) {
+        return '';
+    }
+
+    $tmp_file = @tempnam(sys_get_temp_dir(), 'ahx_git_empty_');
+    if ($tmp_file === false || $tmp_file === '') {
+        return '';
+    }
+
+    @file_put_contents($tmp_file, '');
+
+    $res = ahx_wp_github_repo_changes_git(
+        $dir,
+        'diff --no-index -U2 -- ' . escapeshellarg($tmp_file) . ' ' . escapeshellarg($absolute_file),
+        $timeout
+    );
+
+    @unlink($tmp_file);
+
+    return (string)($res['output'] ?? '');
+}
+
 function ahx_wp_github_repo_changes_find_untracked_empty_dirs($dir, $timeout = 20) {
     $result = [];
     $root = realpath($dir);
@@ -77,7 +106,7 @@ function ahx_wp_github_repo_changes_find_untracked_empty_dirs($dir, $timeout = 2
 ahx_wp_main_display_admin_notices();
 
 // Änderungen auslesen
-$status_result = ahx_wp_github_repo_changes_git($dir, 'status --porcelain', 20);
+$status_result = ahx_wp_github_repo_changes_git($dir, 'status --porcelain -uall', 20);
 $changes = trim((string)($status_result['output'] ?? ''));
 
 // Mapping für Statuskürzel (Anzeigelegende)
@@ -168,20 +197,25 @@ foreach ($files as &$f) {
         continue;
     }
 
-    // Ensure git sees new files for diff
-    ahx_wp_github_repo_changes_git($dir, 'add -N -- ' . escapeshellarg($f['file']), 20);
-    ahx_wp_github_repo_changes_git($dir, 'update-index --refresh', 20);
-
-    $diff_res = ahx_wp_github_repo_changes_git($dir, 'diff HEAD -U2 -- ' . escapeshellarg($f['file']), 20);
-    $diff = (string)($diff_res['output'] ?? '');
-    if (trim($diff) === '') {
-        $diff_res = ahx_wp_github_repo_changes_git($dir, 'diff -U2 -- ' . escapeshellarg($f['file']), 20);
-        $diff = (string)($diff_res['output'] ?? '');
+    $diff = '';
+    if ($status === '??') {
+        $diff = ahx_wp_github_repo_changes_diff_untracked_file($dir, $f['file'], 20);
     }
+
     if (trim($diff) === '') {
-        $null_device = stripos(PHP_OS, 'WIN') === 0 ? 'NUL' : '/dev/null';
-        $diff_res = ahx_wp_github_repo_changes_git($dir, 'diff --no-index -U2 ' . $null_device . ' ' . escapeshellarg($f['file']), 20);
+        // Ensure git sees new files for diff
+        ahx_wp_github_repo_changes_git($dir, 'add -N -- ' . escapeshellarg($f['file']), 20);
+        ahx_wp_github_repo_changes_git($dir, 'update-index --refresh', 20);
+
+        $diff_res = ahx_wp_github_repo_changes_git($dir, 'diff HEAD -U2 -- ' . escapeshellarg($f['file']), 20);
         $diff = (string)($diff_res['output'] ?? '');
+        if (trim($diff) === '') {
+            $diff_res = ahx_wp_github_repo_changes_git($dir, 'diff -U2 -- ' . escapeshellarg($f['file']), 20);
+            $diff = (string)($diff_res['output'] ?? '');
+        }
+        if (trim($diff) === '') {
+            $diff = ahx_wp_github_repo_changes_diff_untracked_file($dir, $f['file'], 20);
+        }
     }
 
     if (!trim($diff)) {
