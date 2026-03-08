@@ -255,6 +255,10 @@ if (isset($_POST['ahx_repo_sync_submit']) && current_user_can('manage_options'))
                     if ($msg === '') $msg = 'Unbekannter Fehler beim Sync.';
                     echo '<div class="error"><p>Sync fehlgeschlagen: ' . esc_html(substr($msg, 0, 500)) . '</p></div>';
                 }
+
+                if (function_exists('ahx_wp_github_clear_repo_status_cache')) {
+                    ahx_wp_github_clear_repo_status_cache(intval($repo->id), (string)$repo->dir_path);
+                }
             }
         }
     }
@@ -309,86 +313,25 @@ ahx_wp_main_display_admin_notices();
         $table = $wpdb->prefix . 'ahx_wp_github';
         $rows = $wpdb->get_results("SELECT * FROM $table");
         if ($rows) {
-            $display_rows = [];
             foreach ($rows as $row) {
                 $details_url = admin_url('admin.php?page=ahx-wp-github&repo_details=1&dir=' . urlencode($row->dir_path));
-                $changes_url = admin_url('admin.php?page=ahx-wp-github&repo_changes=1&dir=' . urlencode($row->dir_path));
                 $repo_version = ahx_wp_github_admin_get_repo_version($row->dir_path, $row->name);
                 $git_dir = $row->dir_path . DIRECTORY_SEPARATOR . '.git';
-                $btn_changes = '';
-                $is_actionable = false;
+
                 if (is_dir($git_dir)) {
-                    $git_timeout = intval(get_option('ahx_wp_github_git_timeout_seconds', 15));
-                    if ($git_timeout < 5) $git_timeout = 15;
-                    if ($git_timeout > 120) $git_timeout = 120;
-
-                    $res = ahx_wp_github_admin_run_git($row->dir_path, 'status --porcelain', $git_timeout);
-                    $exit_code = intval($res['exit'] ?? 1);
-                    $status = trim((string)($res['output'] ?? ''));
-                    $lines = $status !== '' ? array_filter(preg_split('/\r\n|\r|\n/', $status)) : [];
-                    $count = count($lines);
-                    $empty_dir_count = ahx_wp_github_admin_count_untracked_empty_dirs($row->dir_path, $git_timeout);
-                    $total_count = $count + $empty_dir_count;
-                    $sync_pending = false;
-
-                    if ($exit_code === 0 && $total_count > 0) {
-                        $is_actionable = true;
-                        $btn_changes = '<a href="' . esc_url($changes_url) . '" class="button" title="Änderungsdetails anzeigen">' . $total_count . ' Änderung' . ($total_count > 1 ? 'en' : '') . '</a>';
-                    } elseif ($exit_code === 0 && $total_count === 0) {
-                        $sync_pending = ahx_wp_github_admin_is_sync_pending($row->dir_path, $git_timeout);
-                        if ($sync_pending) {
-                            $is_actionable = true;
-                        }
-                    }
-
-                    if ($exit_code === 0 && $total_count === 0 && $sync_pending) {
-                        $btn_changes = '<form method="post" style="display:inline; margin:0;">';
-                        $btn_changes .= wp_nonce_field('ahx_repo_sync', 'ahx_repo_sync_nonce', true, false);
-                        $btn_changes .= '<input type="hidden" name="repo_id" value="' . intval($row->id) . '">';
-                        $btn_changes .= '<button type="submit" name="ahx_repo_sync_submit" value="1" class="button button-primary" title="Ausstehenden Sync durchführen" onclick="return confirm(\'Möchten Sie den ausstehenden Sync jetzt durchführen?\');">Sync</button>';
-                        $btn_changes .= '</form>';
-                    } elseif ($exit_code !== 0) {
-                        $btn_changes = '<span title="Git-Status konnte nicht gelesen werden" style="color:#b32d2e;">Statusfehler</span>';
-                    }
+                    $btn_changes = '<span class="ahx-repo-row-status" data-repo-id="' . intval($row->id) . '" style="color:#50575e;">Prüfe…</span>';
                 } else {
                     $btn_changes = '';
                 }
 
-                $display_rows[] = [
-                    'row' => $row,
-                    'details_url' => $details_url,
-                    'repo_version' => $repo_version,
-                    'btn_changes' => $btn_changes,
-                    'priority' => $is_actionable ? 0 : 1,
-                    'sort_name' => strtolower((string)$row->name),
-                ];
-            }
-
-            usort($display_rows, function($a, $b) {
-                $priority_cmp = intval($a['priority']) <=> intval($b['priority']);
-                if ($priority_cmp !== 0) {
-                    return $priority_cmp;
-                }
-
-                $name_cmp = strcmp((string)$a['sort_name'], (string)$b['sort_name']);
-                if ($name_cmp !== 0) {
-                    return $name_cmp;
-                }
-
-                return intval($a['row']->id) <=> intval($b['row']->id);
-            });
-
-            foreach ($display_rows as $entry) {
-                $row = $entry['row'];
-                $row_style = intval($entry['priority']) === 0 ? ' style="background:#fff8e5;"' : '';
-                echo '<tr' . $row_style . '>';
+                echo '<tr>';
                 echo '<td>' . esc_html($row->id) . '</td>';
                 echo '<td>' . esc_html($row->name) . '</td>';
                 echo '<td>' . esc_html($row->type) . '</td>';
-                echo '<td>' . esc_html($entry['repo_version']) . '</td>';
-                echo '<td>' . esc_html(preg_replace('/[\\\\\/]+/', DIRECTORY_SEPARATOR, $row->dir_path)) . '</td>';
+                echo '<td>' . esc_html($repo_version) . '</td>';
+                echo '<td>' . esc_html(preg_replace('/[\\\/]+/', DIRECTORY_SEPARATOR, $row->dir_path)) . '</td>';
                 echo '<td>' . esc_html($row->created_at) . '</td>';
-                echo '<td><div style="display:inline-flex;gap:5px;align-items:center">' . $entry['btn_changes'] . '<a href="' . esc_url($entry['details_url']) . '" class="button">Details</a></div></td>';
+                echo '<td><div style="display:inline-flex;gap:5px;align-items:center">' . $btn_changes . '<a href="' . esc_url($details_url) . '" class="button">Details</a></div></td>';
                 echo '</tr>';
             }
         } else {
@@ -402,11 +345,13 @@ ahx_wp_main_display_admin_notices();
 echo "</div>";
 
 $ahx_dir_browse_nonce = wp_create_nonce('ahx_repo_browse');
+$ahx_repo_row_status_nonce = wp_create_nonce('ahx_repo_row_status');
 ?>
 <script>
 (function() {
     const ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>;
     const browseNonce = <?php echo wp_json_encode($ahx_dir_browse_nonce); ?>;
+    const repoRowStatusNonce = <?php echo wp_json_encode($ahx_repo_row_status_nonce); ?>;
     const dirInput = document.getElementById('ahx_github_dir');
     const openBtn = document.getElementById('ahx-open-dir-picker');
     const modal = document.getElementById('ahx-dir-picker-modal');
@@ -418,10 +363,6 @@ $ahx_dir_browse_nonce = wp_create_nonce('ahx_repo_browse');
     const chooseBtn = document.getElementById('ahx-dir-picker-choose');
     const listEl = document.getElementById('ahx-dir-picker-list');
     const statusEl = document.getElementById('ahx-dir-picker-status');
-
-    if (!openBtn || !modal || !dirInput) {
-        return;
-    }
 
     let currentPath = '';
     let parentPath = '';
@@ -541,33 +482,91 @@ $ahx_dir_browse_nonce = wp_create_nonce('ahx_repo_browse');
         modal.style.display = 'none';
     }
 
-    openBtn.addEventListener('click', openModal);
-    closeBtn.addEventListener('click', closeModal);
+    if (openBtn && modal && dirInput && closeBtn && pathField && upBtn && rootsSelect && openRootBtn && chooseBtn && listEl && statusEl) {
+        openBtn.addEventListener('click', openModal);
+        closeBtn.addEventListener('click', closeModal);
 
-    modal.addEventListener('click', function(e) {
-        if (e.target === modal) {
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+
+        upBtn.addEventListener('click', function() {
+            if (!isLoading && parentPath) {
+                loadPath(parentPath);
+            }
+        });
+
+        openRootBtn.addEventListener('click', function() {
+            if (!isLoading && rootsSelect.value) {
+                loadPath(rootsSelect.value);
+            }
+        });
+
+        chooseBtn.addEventListener('click', function() {
+            if (!currentPath) {
+                return;
+            }
+            dirInput.value = currentPath;
             closeModal();
-        }
-    });
+        });
+    }
 
-    upBtn.addEventListener('click', function() {
-        if (!isLoading && parentPath) {
-            loadPath(parentPath);
-        }
-    });
-
-    openRootBtn.addEventListener('click', function() {
-        if (!isLoading && rootsSelect.value) {
-            loadPath(rootsSelect.value);
-        }
-    });
-
-    chooseBtn.addEventListener('click', function() {
-        if (!currentPath) {
+    function loadRepoRowStatusesSequentially() {
+        const statusEls = Array.prototype.slice.call(document.querySelectorAll('.ahx-repo-row-status[data-repo-id]'));
+        if (!statusEls.length) {
             return;
         }
-        dirInput.value = currentPath;
-        closeModal();
-    });
+
+        let index = 0;
+        const processNext = function() {
+            if (index >= statusEls.length) {
+                return;
+            }
+
+            const el = statusEls[index++];
+            const repoId = String(el.getAttribute('data-repo-id') || '');
+            if (!repoId) {
+                processNext();
+                return;
+            }
+
+            const formData = new URLSearchParams();
+            formData.append('action', 'ahx_repo_row_status');
+            formData.append('nonce', repoRowStatusNonce);
+            formData.append('repo_id', repoId);
+
+            fetch(ajaxUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                },
+                body: formData.toString(),
+                credentials: 'same-origin'
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(payload) {
+                if (payload && payload.success && payload.data) {
+                    const html = String(payload.data.html || '');
+                    el.innerHTML = html.trim() === '' ? '' : html;
+                    return;
+                }
+                el.textContent = 'Statusfehler';
+                el.style.color = '#b32d2e';
+            })
+            .catch(function() {
+                el.textContent = 'Statusfehler';
+                el.style.color = '#b32d2e';
+            })
+            .finally(function() {
+                processNext();
+            });
+        };
+
+        processNext();
+    }
+
+    loadRepoRowStatusesSequentially();
 })();
 </script>

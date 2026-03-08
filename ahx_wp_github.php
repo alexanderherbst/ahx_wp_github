@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.7.7
+Version: v1.8.0
 Author: AHX
 */
 
@@ -209,6 +209,216 @@ function ahx_wp_github_get_browse_roots() {
     sort($normalized, SORT_NATURAL | SORT_FLAG_CASE);
 
     return $normalized;
+}
+
+function ahx_wp_github_get_git_timeout() {
+    $git_timeout = intval(get_option('ahx_wp_github_git_timeout_seconds', 15));
+    if ($git_timeout < 5) {
+        $git_timeout = 15;
+    }
+    if ($git_timeout > 120) {
+        $git_timeout = 120;
+    }
+
+    return $git_timeout;
+}
+
+function ahx_wp_github_run_git($dir, $args, $timeout = 20, $needs_remote_auth = false) {
+    if (!function_exists('ahx_run_git_cmd') || !function_exists('ahx_find_git_binary')) {
+        require_once plugin_dir_path(__FILE__) . 'admin/commit-handler.php';
+    }
+
+    return ahx_run_git_cmd(ahx_find_git_binary(), $dir, $args, $timeout, $needs_remote_auth);
+}
+
+function ahx_wp_github_is_sync_pending($dir, $git_timeout = 15) {
+    $branch_res = ahx_wp_github_run_git($dir, 'rev-parse --abbrev-ref HEAD', $git_timeout);
+    if (intval($branch_res['exit'] ?? 1) !== 0) {
+        return false;
+    }
+
+    $branch = trim((string)($branch_res['output'] ?? ''));
+    if ($branch === '' || $branch === 'HEAD') {
+        return false;
+    }
+
+    $upstream_res = ahx_wp_github_run_git($dir, 'rev-parse --abbrev-ref --symbolic-full-name @{u}', $git_timeout);
+    if (intval($upstream_res['exit'] ?? 1) === 0 && trim((string)($upstream_res['output'] ?? '')) !== '') {
+        $ahead_res = ahx_wp_github_run_git($dir, 'rev-list --left-right --count @{u}...HEAD', $git_timeout);
+        if (intval($ahead_res['exit'] ?? 1) !== 0) {
+            return false;
+        }
+        $parts = preg_split('/\s+/', trim((string)($ahead_res['output'] ?? '')));
+        $ahead = isset($parts[1]) ? intval($parts[1]) : 0;
+        return $ahead > 0;
+    }
+
+    $origin_res = ahx_wp_github_run_git($dir, 'remote get-url origin', $git_timeout);
+    if (intval($origin_res['exit'] ?? 1) === 0 && trim((string)($origin_res['output'] ?? '')) !== '') {
+        return true;
+    }
+
+    $ahead_main_res = ahx_wp_github_run_git($dir, 'rev-list --count main..HEAD', $git_timeout);
+    if (intval($ahead_main_res['exit'] ?? 1) === 0) {
+        return intval(trim((string)($ahead_main_res['output'] ?? '0'))) > 0;
+    }
+
+    $ahead_master_res = ahx_wp_github_run_git($dir, 'rev-list --count master..HEAD', $git_timeout);
+    if (intval($ahead_master_res['exit'] ?? 1) === 0) {
+        return intval(trim((string)($ahead_master_res['output'] ?? '0'))) > 0;
+    }
+
+    return false;
+}
+
+function ahx_wp_github_count_untracked_empty_dirs($dir, $git_timeout = 15) {
+    $count = 0;
+    $root = realpath($dir);
+    if ($root === false || !is_dir($root)) {
+        return 0;
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        if (!$item->isDir()) {
+            continue;
+        }
+
+        $abs = $item->getPathname();
+        $normalized = str_replace('\\', '/', $abs);
+        if (preg_match('#(^|/)\.git(/|$)#', $normalized)) {
+            continue;
+        }
+
+        $entries = @scandir($abs);
+        if ($entries === false) {
+            continue;
+        }
+
+        $visible = array_values(array_filter($entries, function($entry) {
+            return $entry !== '.' && $entry !== '..';
+        }));
+        if (count($visible) !== 0) {
+            continue;
+        }
+
+        $rel = ltrim(str_replace('\\', '/', substr($abs, strlen($root))), '/');
+        if ($rel === '') {
+            continue;
+        }
+
+        $ignore_res = ahx_wp_github_run_git($root, 'check-ignore -q -- ' . escapeshellarg($rel . '/'), $git_timeout, false);
+        if (intval($ignore_res['exit'] ?? 1) === 0) {
+            continue;
+        }
+
+        $count++;
+    }
+
+    return $count;
+}
+
+function ahx_wp_github_repo_status_cache_key($repo_id, $dir_path) {
+    return 'ahx_gh_repo_status_' . intval($repo_id) . '_' . md5((string)$dir_path);
+}
+
+function ahx_wp_github_clear_repo_status_cache($repo_id, $dir_path) {
+    delete_transient(ahx_wp_github_repo_status_cache_key($repo_id, $dir_path));
+}
+
+function ahx_wp_github_get_repo_status_data($repo_id, $dir_path) {
+    $cache_key = ahx_wp_github_repo_status_cache_key($repo_id, $dir_path);
+    $cached = get_transient($cache_key);
+    if (is_array($cached) && isset($cached['state'])) {
+        return $cached;
+    }
+
+    $data = [
+        'state' => 'none',
+        'count' => 0,
+    ];
+
+    $git_dir = $dir_path . DIRECTORY_SEPARATOR . '.git';
+    if (!is_dir($git_dir)) {
+        set_transient($cache_key, $data, 45);
+        return $data;
+    }
+
+    $git_timeout = ahx_wp_github_get_git_timeout();
+    $res = ahx_wp_github_run_git($dir_path, 'status --porcelain', $git_timeout);
+    $exit_code = intval($res['exit'] ?? 1);
+    if ($exit_code !== 0) {
+        $data['state'] = 'error';
+        set_transient($cache_key, $data, 45);
+        return $data;
+    }
+
+    $status = trim((string)($res['output'] ?? ''));
+    $lines = $status !== '' ? array_filter(preg_split('/\r\n|\r|\n/', $status)) : [];
+    $count = count($lines);
+    $empty_dir_count = ahx_wp_github_count_untracked_empty_dirs($dir_path, $git_timeout);
+    $total_count = $count + $empty_dir_count;
+
+    if ($total_count > 0) {
+        $data['state'] = 'changes';
+        $data['count'] = $total_count;
+    } elseif (ahx_wp_github_is_sync_pending($dir_path, $git_timeout)) {
+        $data['state'] = 'sync';
+    } else {
+        $data['state'] = 'clean';
+    }
+
+    set_transient($cache_key, $data, 45);
+    return $data;
+}
+
+add_action('wp_ajax_ahx_repo_row_status', 'ahx_wp_github_ajax_repo_row_status');
+function ahx_wp_github_ajax_repo_row_status() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Keine Berechtigung');
+    }
+
+    $nonce = sanitize_text_field(wp_unslash($_POST['nonce'] ?? ''));
+    if (!wp_verify_nonce($nonce, 'ahx_repo_row_status')) {
+        wp_send_json_error('Ungültiger Nonce');
+    }
+
+    $repo_id = intval(wp_unslash($_POST['repo_id'] ?? 0));
+    if ($repo_id <= 0) {
+        wp_send_json_error('Ungültige Repository-ID');
+    }
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'ahx_wp_github';
+    $repo = $wpdb->get_row($wpdb->prepare("SELECT id, dir_path FROM $table WHERE id = %d", $repo_id));
+    if (!$repo || !is_dir($repo->dir_path)) {
+        wp_send_json_success(['html' => '']);
+    }
+
+    $state = ahx_wp_github_get_repo_status_data($repo->id, $repo->dir_path);
+    $changes_url = admin_url('admin.php?page=ahx-wp-github&repo_changes=1&dir=' . urlencode($repo->dir_path));
+    $html = '';
+
+    if (($state['state'] ?? 'none') === 'changes') {
+        $total_count = intval($state['count'] ?? 0);
+        $html = '<a href="' . esc_url($changes_url) . '" class="button" title="Änderungsdetails anzeigen">' . $total_count . ' Änderung' . ($total_count > 1 ? 'en' : '') . '</a>';
+    } elseif (($state['state'] ?? 'none') === 'sync') {
+        $html = '<form method="post" style="display:inline; margin:0;">';
+        $html .= wp_nonce_field('ahx_repo_sync', 'ahx_repo_sync_nonce', true, false);
+        $html .= '<input type="hidden" name="repo_id" value="' . intval($repo->id) . '">';
+        $html .= '<button type="submit" name="ahx_repo_sync_submit" value="1" class="button button-primary" title="Ausstehenden Sync durchführen" onclick="return confirm(\'Möchten Sie den ausstehenden Sync jetzt durchführen?\');">Sync</button>';
+        $html .= '</form>';
+    } elseif (($state['state'] ?? 'none') === 'clean') {
+        $html = '<span class="dashicons dashicons-yes-alt" title="Keine Änderungen" style="color:#8c8f94; font-size:16px; width:16px; height:16px; line-height:16px;"></span>';
+    } elseif (($state['state'] ?? 'none') === 'error') {
+        $html = '<span title="Git-Status konnte nicht gelesen werden" style="color:#b32d2e;">Statusfehler</span>';
+    }
+
+    wp_send_json_success(['html' => $html]);
 }
 
 add_action('wp_ajax_ahx_repo_browse_dirs', 'ahx_wp_github_ajax_browse_dirs');
