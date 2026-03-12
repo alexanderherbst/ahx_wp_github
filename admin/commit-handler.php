@@ -145,6 +145,23 @@ function ahx_run_git_cmd($git_bin, $dir, $args, $timeout = 20, $needs_remote_aut
     return ahx_run_cmd_with_timeout($cmd, $dir, $_ENV, $timeout);
 }
 
+function ahx_wp_github_normalize_path_for_compare($path) {
+    $value = trim((string)$path);
+    if ($value === '') return '';
+    $value = trim($value, " \t\n\r\0\x0B\"'");
+    $value = str_replace('\\', '/', $value);
+    while (strpos($value, '//') !== false) {
+        $value = str_replace('//', '/', $value);
+    }
+    if (strlen($value) > 3) {
+        $value = rtrim($value, '/');
+    }
+    if (stripos(PHP_OS, 'WIN') === 0) {
+        $value = strtolower($value);
+    }
+    return $value;
+}
+
 function ahx_wp_github_ensure_git_identity($git_bin, $dir, $timeout = 20) {
     $res_name = ahx_run_git_cmd($git_bin, $dir, 'config --get user.name', $timeout, false);
     $res_email = ahx_run_git_cmd($git_bin, $dir, 'config --get user.email', $timeout, false);
@@ -713,11 +730,40 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
         $table = $wpdb->prefix . 'ahx_wp_github';
         $safe_flag = $wpdb->get_var($wpdb->prepare("SELECT safe_directory FROM $table WHERE dir_path = %s", $dir));
         if (intval($safe_flag) === 1) {
-            $safe_res = ahx_run_git_cmd($git_bin, $dir, 'config --global --add safe.directory ' . escapeshellarg($dir), 15, false);
-            $resp['safe_directory_configured'] = true;
-            $resp['safe_directory_cmd_output'] = trim((string)($safe_res['output'] ?? ''));
-            $resp['safe_directory_cmd_exit'] = intval($safe_res['exit'] ?? 1);
-            ahx_wp_github_safe_log('DEBUG', 'safe.directory configured exit=' . intval($resp['safe_directory_cmd_exit']) . ' output=' . mb_substr((string)$resp['safe_directory_cmd_output'], 0, 2000), 'ahx_wp_github');
+            $safe_list_res = ahx_run_git_cmd($git_bin, $dir, 'config --global --get-all safe.directory', 15, false);
+            $safe_list_output = trim((string)($safe_list_res['output'] ?? ''));
+            $safe_lines = preg_split('/\r\n|\r|\n/', $safe_list_output);
+            if (!is_array($safe_lines)) {
+                $safe_lines = [];
+            }
+
+            $dir_normalized = ahx_wp_github_normalize_path_for_compare($dir);
+            $match_count = 0;
+            foreach ($safe_lines as $line) {
+                if (ahx_wp_github_normalize_path_for_compare($line) === $dir_normalized) {
+                    $match_count++;
+                }
+            }
+
+            if ($match_count > 1) {
+                ahx_run_git_cmd($git_bin, $dir, 'config --global --unset-all safe.directory ' . escapeshellarg($dir), 15, false);
+                $safe_res = ahx_run_git_cmd($git_bin, $dir, 'config --global --add safe.directory ' . escapeshellarg($dir), 15, false);
+                $resp['safe_directory_configured'] = true;
+                $resp['safe_directory_cmd_output'] = trim((string)($safe_res['output'] ?? ''));
+                $resp['safe_directory_cmd_exit'] = intval($safe_res['exit'] ?? 1);
+                ahx_wp_github_safe_log('DEBUG', 'safe.directory deduplicated for repo exit=' . intval($resp['safe_directory_cmd_exit']) . ' output=' . mb_substr((string)$resp['safe_directory_cmd_output'], 0, 2000), 'ahx_wp_github');
+            } elseif ($match_count === 0) {
+                $safe_res = ahx_run_git_cmd($git_bin, $dir, 'config --global --add safe.directory ' . escapeshellarg($dir), 15, false);
+                $resp['safe_directory_configured'] = true;
+                $resp['safe_directory_cmd_output'] = trim((string)($safe_res['output'] ?? ''));
+                $resp['safe_directory_cmd_exit'] = intval($safe_res['exit'] ?? 1);
+                ahx_wp_github_safe_log('DEBUG', 'safe.directory configured exit=' . intval($resp['safe_directory_cmd_exit']) . ' output=' . mb_substr((string)$resp['safe_directory_cmd_output'], 0, 2000), 'ahx_wp_github');
+            } else {
+                $resp['safe_directory_configured'] = true;
+                $resp['safe_directory_cmd_output'] = 'safe.directory already configured';
+                $resp['safe_directory_cmd_exit'] = 0;
+                ahx_wp_github_safe_log('DEBUG', 'safe.directory already present, skip add', 'ahx_wp_github');
+            }
         } else {
             $resp['safe_directory_configured'] = false;
             ahx_wp_github_safe_log('DEBUG', 'safe.directory not enabled for repo', 'ahx_wp_github');

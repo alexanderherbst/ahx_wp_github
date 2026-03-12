@@ -85,6 +85,23 @@ function ahx_diag_run_cmd($command, $cwd = null, $timeout = 20, $is_git_command 
     return ['exit' => $exitCode, 'output' => trim($output)];
 }
 
+function ahx_diag_normalize_path_for_compare($path) {
+    $value = trim((string)$path);
+    if ($value === '') return '';
+    $value = trim($value, " \t\n\r\0\x0B\"'");
+    $value = str_replace('\\', '/', $value);
+    while (strpos($value, '//') !== false) {
+        $value = str_replace('//', '/', $value);
+    }
+    if (strlen($value) > 3) {
+        $value = rtrim($value, '/');
+    }
+    if (stripos(PHP_OS, 'WIN') === 0) {
+        $value = strtolower($value);
+    }
+    return $value;
+}
+
 $results = [];
 $selected_repo_id = 0;
 if (isset($_POST['ahx_run_diagnostics'])) {
@@ -124,6 +141,43 @@ if (isset($_POST['ahx_run_diagnostics'])) {
                 $needs_remote_auth = preg_match('/^(fetch|pull|push|ls-remote)\b/i', $git_args) === 1;
                 $res = ahx_run_git_cmd($git_bin, $dir, $git_args, $timeout, $needs_remote_auth);
                 $command_display = (string)($item['display'] ?? ('git ' . $git_args));
+
+                if (($item['label'] ?? '') === 'Safe Directory List' && intval($res['exit'] ?? 1) === 0) {
+                    $raw_output = trim((string)($res['output'] ?? ''));
+                    $res['raw_output'] = $raw_output;
+                    $lines = preg_split('/\r\n|\r|\n/', $raw_output);
+                    if (!is_array($lines)) {
+                        $lines = [];
+                    }
+
+                    $seen = [];
+                    $unique_lines = [];
+                    foreach ($lines as $line) {
+                        $line = trim((string)$line);
+                        if ($line === '') {
+                            continue;
+                        }
+                        $key = ahx_diag_normalize_path_for_compare($line);
+                        if ($key === '') {
+                            continue;
+                        }
+                        if (!isset($seen[$key])) {
+                            $seen[$key] = true;
+                            $unique_lines[] = $line;
+                        }
+                    }
+
+                    if (count($unique_lines) > 0) {
+                        $dup_count = count($lines) - count($unique_lines);
+                        if ($dup_count > 0) {
+                            $res['output'] = "[Anzeige bereinigt: {$dup_count} Duplikat(e) entfernt]\n" . implode("\n", $unique_lines);
+                        } else {
+                            $res['output'] = implode("\n", $unique_lines);
+                        }
+                    } else {
+                        $res['output'] = $raw_output;
+                    }
+                }
             } else {
                 $res = ahx_diag_run_cmd($item['cmd'], $item['cwd'] ?? null, $timeout, false);
                 $command_display = (string)($item['cmd'] ?? '');
@@ -171,6 +225,12 @@ if (isset($_POST['ahx_run_diagnostics'])) {
                 <?php endif; ?>
                 <p style="margin:0 0 6px 0;">Exit-Code: <strong><?php echo esc_html((string) $row['exit']); ?></strong> · Timeout: <strong><?php echo esc_html((string)($row['timeout'] ?? '')); ?>s</strong> · Typ: <strong><?php echo !empty($row['is_git']) ? 'git' : 'other'; ?></strong></p>
                 <pre style="white-space:pre-wrap; margin:0; background:#f7f7f7; border:1px solid #eee; padding:8px;"><?php echo esc_html($row['output']); ?></pre>
+                <?php if (($row['label'] ?? '') === 'Safe Directory List' && !empty($row['raw_output']) && trim((string)$row['raw_output']) !== trim((string)$row['output'])): ?>
+                    <details style="margin-top:8px;">
+                        <summary>Originalausgabe anzeigen</summary>
+                        <pre style="white-space:pre-wrap; margin:8px 0 0 0; background:#f7f7f7; border:1px solid #eee; padding:8px;"><?php echo esc_html((string)$row['raw_output']); ?></pre>
+                    </details>
+                <?php endif; ?>
             </div>
         <?php endforeach; ?>
     <?php endif; ?>
