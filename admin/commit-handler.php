@@ -739,14 +739,25 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
 
             $dir_normalized = ahx_wp_github_normalize_path_for_compare($dir);
             $match_count = 0;
+            $matching_values = [];
             foreach ($safe_lines as $line) {
+                $line = trim((string)$line);
+                if ($line === '') {
+                    continue;
+                }
                 if (ahx_wp_github_normalize_path_for_compare($line) === $dir_normalized) {
                     $match_count++;
+                    $matching_values[$line] = true;
                 }
             }
 
             if ($match_count > 1) {
-                ahx_run_git_cmd($git_bin, $dir, 'config --global --unset-all safe.directory ' . escapeshellarg($dir), 15, false);
+                foreach (array_keys($matching_values) as $safe_value) {
+                    $unset_res = ahx_run_git_cmd($git_bin, $dir, 'config --global --fixed-value --unset-all safe.directory ' . escapeshellarg($safe_value), 15, false);
+                    if (intval($unset_res['exit'] ?? 1) !== 0) {
+                        ahx_run_git_cmd($git_bin, $dir, 'config --global --unset-all safe.directory ' . escapeshellarg($safe_value), 15, false);
+                    }
+                }
                 $safe_res = ahx_run_git_cmd($git_bin, $dir, 'config --global --add safe.directory ' . escapeshellarg($dir), 15, false);
                 $resp['safe_directory_configured'] = true;
                 $resp['safe_directory_cmd_output'] = trim((string)($safe_res['output'] ?? ''));

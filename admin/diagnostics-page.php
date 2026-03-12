@@ -188,6 +188,7 @@ if (isset($_POST['ahx_run_diagnostics'])) {
                 'command' => $command_display,
                 'exit' => $res['exit'],
                 'output' => $res['output'],
+                'raw_output' => $res['raw_output'] ?? '',
                 'timeout' => $timeout,
                 'is_git' => $is_git,
             ];
