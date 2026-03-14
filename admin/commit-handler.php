@@ -715,6 +715,50 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
         );
         file_put_contents($main_plugin_path, $main_file_contents);
     }
+
+    // Update theme main stylesheet version if present.
+    $style_css = $dir . DIRECTORY_SEPARATOR . 'style.css';
+    if (file_exists($style_css)) {
+        $style_contents = file_get_contents($style_css);
+        if ($style_contents !== false) {
+            $updated_style_contents = preg_replace('/(Version:\s*)v?(\d+\.\d+\.\d+)/i', '$1' . $new_version, $style_contents, 1);
+            if ($updated_style_contents !== null && $updated_style_contents !== $style_contents) {
+                file_put_contents($style_css, $updated_style_contents);
+            }
+        }
+    }
+
+    // Update README.md version line if present (case-insensitive filename match).
+    $readme_md = '';
+    $root_entries = @scandir($dir);
+    if (is_array($root_entries)) {
+        foreach ($root_entries as $entry_name) {
+            if (!is_string($entry_name)) {
+                continue;
+            }
+            if (strtolower($entry_name) === 'readme.md') {
+                $readme_md = $dir . DIRECTORY_SEPARATOR . $entry_name;
+                break;
+            }
+        }
+    }
+    if ($readme_md !== '' && file_exists($readme_md)) {
+        $readme_contents = file_get_contents($readme_md);
+        if ($readme_contents !== false) {
+            $updated_readme = $readme_contents;
+
+            // Handles lines like: "Version: v1.2.3".
+            $updated_readme = preg_replace('/(^\s*Version\s*:\s*)v?(\d+\.\d+\.\d+)/mi', '$1' . $new_version, $updated_readme, 1);
+
+            // Handles lines like: "**Version:** v1.2.3".
+            $updated_readme = preg_replace('/(^\s*\*\*Version:\*\*\s*)v?(\d+\.\d+\.\d+)/mi', '$1' . $new_version, $updated_readme, 1);
+
+            if ($updated_readme !== null && $updated_readme !== $readme_contents) {
+                file_put_contents($readme_md, $updated_readme);
+            }
+        }
+    }
+
     $version_txt = $dir . DIRECTORY_SEPARATOR . 'version.txt';
     if (file_exists($version_txt)) file_put_contents($version_txt, $new_version . "\n");
     ahx_wp_github_safe_log('DEBUG', 'version bump result: old=' . (string)$header_version . ' new=' . (string)$new_version . ' mode=' . (string)$bump, 'ahx_wp_github');
