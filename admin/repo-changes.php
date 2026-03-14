@@ -159,6 +159,12 @@ foreach ($empty_dirs as $empty_dir_rel) {
 $has_changes = !empty($files);
 $back_url = admin_url('admin.php?page=ahx-wp-github');
 
+$prefill_commit_message = sanitize_textarea_field(wp_unslash($_GET['prefill_commit_message'] ?? ''));
+$prefill_version_bump = sanitize_key(wp_unslash($_GET['prefill_version_bump'] ?? 'none'));
+if (!in_array($prefill_version_bump, ['none', 'patch', 'minor', 'major'], true)) {
+    $prefill_version_bump = 'none';
+}
+
 // Mapping für Statuskürzel
 
 // --- VORBEREITUNG: Berechnungen, Diffs und Commit-Logik (keine Ausgabe) ---
@@ -504,13 +510,13 @@ if (isset($_POST['commit_action'])) {
         <form id="ahx-repo-commit-form" method="post" style="margin-top:24px;">
             <?php wp_nonce_field('ahx_repo_commit_form', 'ahx_repo_commit_nonce'); ?>
             <label for="commit_message"><strong>Commit-Beschreibung:</strong></label><br>
-            <textarea id="commit_message" name="commit_message" rows="3" style="width:100%;max-width:600px;"></textarea><br>
+            <textarea id="commit_message" name="commit_message" rows="3" style="width:100%;max-width:600px;"><?php echo esc_textarea($prefill_commit_message); ?></textarea><br>
             <fieldset style="margin:12px 0;">
                 <legend><strong>Versionssprung:</strong></legend>
-                <label><input type="radio" name="version_bump" value="none" checked> Kein Versionssprung (<?php echo esc_html($header_version_disp); ?>)</label>
-                <label style="margin-left:16px;"><input type="radio" name="version_bump" value="patch"> Patch (<?php echo esc_html($header_version_disp . ' ⇒ ' . $v_patch); ?>)</label>
-                <label style="margin-left:16px;"><input type="radio" name="version_bump" value="minor"> Minor (<?php echo esc_html($header_version_disp . ' ⇒ ' . $v_minor); ?>)</label>
-                <label style="margin-left:16px;"><input type="radio" name="version_bump" value="major"> Major (<?php echo esc_html($header_version_disp . ' ⇒ ' . $v_major); ?>)</label>
+                <label><input type="radio" name="version_bump" value="none" <?php checked($prefill_version_bump, 'none'); ?>> Kein Versionssprung (<?php echo esc_html($header_version_disp); ?>)</label>
+                <label style="margin-left:16px;"><input type="radio" name="version_bump" value="patch" <?php checked($prefill_version_bump, 'patch'); ?>> Patch (<?php echo esc_html($header_version_disp . ' ⇒ ' . $v_patch); ?>)</label>
+                <label style="margin-left:16px;"><input type="radio" name="version_bump" value="minor" <?php checked($prefill_version_bump, 'minor'); ?>> Minor (<?php echo esc_html($header_version_disp . ' ⇒ ' . $v_minor); ?>)</label>
+                <label style="margin-left:16px;"><input type="radio" name="version_bump" value="major" <?php checked($prefill_version_bump, 'major'); ?>> Major (<?php echo esc_html($header_version_disp . ' ⇒ ' . $v_major); ?>)</label>
             </fieldset>
             <p style="margin:10px 0;">
                 <label style="display:inline-flex;align-items:center;gap:6px;">
