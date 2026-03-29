@@ -1,6 +1,6 @@
 # AHX WP GitHub
 
-Version: v1.11.4  
+Version: v1.11.5  
 Author: AHX
 
 ## Beschreibung

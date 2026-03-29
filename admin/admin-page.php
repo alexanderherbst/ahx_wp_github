@@ -429,8 +429,8 @@ ahx_wp_main_display_admin_notices();
                 $git_dir = $row->dir_path . DIRECTORY_SEPARATOR . '.git';
 
                 if (is_dir($git_dir)) {
-                    $btn_changes = '<span class="ahx-repo-row-status" data-repo-id="' . intval($row->id) . '" style="color:#50575e;">Prüfe…</span>';
-                    $issues_badge = '<span class="ahx-repo-row-issues" data-repo-id="' . intval($row->id) . '" style="color:#8c8f94;">Issues…</span>';
+                    $btn_changes = '<span class="ahx-repo-row-status" data-repo-id="' . intval($row->id) . '" style="color:#b0b4b9;">in Prüfung</span>';
+                    $issues_badge = '<span class="ahx-repo-row-issues" data-repo-id="' . intval($row->id) . '" style="color:#b0b4b9;">in Prüfung</span>';
                 } else {
                     $btn_changes = '';
                     $issues_badge = '';
@@ -668,12 +668,10 @@ $ahx_repo_row_issues_nonce = wp_create_nonce('ahx_repo_row_issues');
                     el.innerHTML = html.trim() === '' ? '' : html;
                     return;
                 }
-                el.textContent = 'Statusfehler';
-                el.style.color = '#b32d2e';
+                el.innerHTML = '';
             })
             .catch(function() {
-                el.textContent = 'Statusfehler';
-                el.style.color = '#b32d2e';
+                el.innerHTML = '';
             })
             .finally(function() {
                 processNext();
@@ -730,15 +728,13 @@ $ahx_repo_row_issues_nonce = wp_create_nonce('ahx_repo_row_issues');
             .then(function(payload) {
                 if (payload && payload.success && payload.data) {
                     const html = String(payload.data.html || '');
-                    el.innerHTML = html.trim() === '' ? '<span style="color:#8c8f94;">Issues: -</span>' : html;
+                    el.innerHTML = html.trim() === '' ? '' : html;
                     return;
                 }
-                el.textContent = 'Issues: -';
-                el.style.color = '#8c8f94';
+                el.innerHTML = '';
             })
             .catch(function() {
-                el.textContent = 'Issues: -';
-                el.style.color = '#8c8f94';
+                el.innerHTML = '';
             })
             .finally(function() {
                 el.setAttribute('data-issues-loaded', '1');
@@ -764,9 +760,15 @@ $ahx_repo_row_issues_nonce = wp_create_nonce('ahx_repo_row_issues');
                     if (!entry.isIntersecting) {
                         return;
                     }
-                    const el = entry.target;
-                    observer.unobserve(el);
-                    enqueue(el);
+                    const observedTarget = entry.target;
+                    observer.unobserve(observedTarget);
+
+                    const el = observedTarget.classList && observedTarget.classList.contains('ahx-repo-row-issues')
+                        ? observedTarget
+                        : observedTarget.querySelector('.ahx-repo-row-issues[data-repo-id]');
+                    if (el) {
+                        enqueue(el);
+                    }
                 });
             }, {
                 root: null,
@@ -775,7 +777,8 @@ $ahx_repo_row_issues_nonce = wp_create_nonce('ahx_repo_row_issues');
             });
 
             issueEls.forEach(function(el) {
-                observer.observe(el);
+                const row = el.closest('tr');
+                observer.observe(row || el);
             });
             return;
         }

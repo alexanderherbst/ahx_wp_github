@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.11.4
+Version: v1.11.5
 Author: AHX
 Email: ahx@familie-herbst.net
 */
@@ -529,23 +529,13 @@ function ahx_wp_github_ajax_repo_row_status() {
     if (($state['state'] ?? 'none') === 'changes') {
         $total_count = intval($state['count'] ?? 0);
         $html = '<a href="' . esc_url($changes_url) . '" class="button" title="Änderungsdetails anzeigen">' . $total_count . ' Änderung' . ($total_count > 1 ? 'en' : '') . '</a>';
-    } elseif (($state['state'] ?? 'none') === 'sync') {
-        $html = '<form method="post" style="display:inline; margin:0;">';
-        $html .= wp_nonce_field('ahx_repo_sync', 'ahx_repo_sync_nonce', true, false);
-        $html .= '<input type="hidden" name="repo_id" value="' . intval($repo->id) . '">';
-        $html .= '<button type="submit" name="ahx_repo_sync_submit" value="1" class="button button-primary" title="Ausstehenden Sync durchführen" onclick="return confirm(\'Möchten Sie den ausstehenden Sync jetzt durchführen?\');">Sync</button>';
-        $html .= '</form>';
-    } elseif (($state['state'] ?? 'none') === 'clean') {
-        $html = '<span class="dashicons dashicons-yes-alt" title="Keine Änderungen" style="color:#8c8f94; font-size:16px; width:16px; height:16px; line-height:16px;"></span>';
-    } elseif (($state['state'] ?? 'none') === 'error') {
-        $html = '<span title="Git-Status konnte nicht gelesen werden" style="color:#b32d2e;">Statusfehler</span>';
     }
 
     wp_send_json_success(['html' => $html]);
 }
 
 function ahx_wp_github_repo_issues_cache_key($repo_id, $dir_path) {
-    return 'ahx_gh_repo_issues_' . intval($repo_id) . '_' . md5((string)$dir_path);
+    return 'ahx_gh_repo_issues_v2_' . intval($repo_id) . '_' . md5((string)$dir_path);
 }
 
 function ahx_wp_github_clear_repo_issues_cache($repo_id, $dir_path) {
@@ -612,23 +602,20 @@ function ahx_wp_github_get_repo_issues_badge_html($repo_id, $dir_path) {
 
     $origin_res = ahx_wp_github_run_git($dir_path, 'remote get-url origin', 10);
     if (intval($origin_res['exit'] ?? 1) !== 0) {
-        $html = '<span style="color:#8c8f94;">Issues: -</span>';
-        set_transient($cache_key, ['html' => $html], 300);
-        return $html;
+        set_transient($cache_key, ['html' => ''], 300);
+        return '';
     }
 
     $remote_url = trim((string)($origin_res['output'] ?? ''));
     if (!ahx_wp_github_is_github_remote_url($remote_url)) {
-        $html = '<span style="color:#8c8f94;">Issues: -</span>';
-        set_transient($cache_key, ['html' => $html], 600);
-        return $html;
+        set_transient($cache_key, ['html' => ''], 600);
+        return '';
     }
 
     list($owner, $repo) = ahx_wp_github_parse_owner_repo_from_remote($remote_url);
     if ($owner === '' || $repo === '') {
-        $html = '<span style="color:#8c8f94;">Issues: -</span>';
-        set_transient($cache_key, ['html' => $html], 600);
-        return $html;
+        set_transient($cache_key, ['html' => ''], 600);
+        return '';
     }
 
     $token = trim((string)get_option('ahx_wp_main_github_token', ''));
@@ -648,29 +635,26 @@ function ahx_wp_github_get_repo_issues_badge_html($repo_id, $dir_path) {
     ]);
 
     if (is_wp_error($response)) {
-        $html = '<span style="color:#8c8f94;" title="' . esc_attr($response->get_error_message()) . '">Issues: -</span>';
-        set_transient($cache_key, ['html' => $html], 120);
-        return $html;
+        set_transient($cache_key, ['html' => ''], 120);
+        return '';
     }
 
     $status = intval(wp_remote_retrieve_response_code($response));
     $body = json_decode((string)wp_remote_retrieve_body($response), true);
     if ($status < 200 || $status >= 300 || !is_array($body)) {
-        $api_message = is_array($body) ? trim((string)($body['message'] ?? '')) : '';
-        $title = $api_message !== '' ? $api_message : ('HTTP ' . $status);
-        $html = '<span style="color:#8c8f94;" title="' . esc_attr($title) . '">Issues: -</span>';
-        set_transient($cache_key, ['html' => $html], 120);
-        return $html;
+        set_transient($cache_key, ['html' => ''], 120);
+        return '';
     }
 
     $count = max(0, intval($body['total_count'] ?? 0));
-    $issues_url = 'https://github.com/' . rawurlencode($owner) . '/' . rawurlencode($repo) . '/issues?q=is%3Aissue+is%3Aopen';
-    $badge_style = 'display:inline-block;min-width:18px;padding:0 6px;border-radius:999px;background:#2271b1;color:#fff;font-size:11px;line-height:18px;text-align:center;';
+    if ($count < 1) {
+        set_transient($cache_key, ['html' => ''], 600);
+        return '';
+    }
 
-    $html = '<a href="' . esc_url($issues_url) . '" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">'
-        . '<span style="color:#1d2327;">Issues</span> '
-        . '<span style="' . esc_attr($badge_style) . '">' . esc_html((string)$count) . '</span>'
-        . '</a>';
+    $issues_url = 'https://github.com/' . rawurlencode($owner) . '/' . rawurlencode($repo) . '/issues?q=is%3Aissue+is%3Aopen';
+    $html = '<a href="' . esc_url($issues_url) . '" target="_blank" rel="noopener noreferrer" class="button" title="Offene Issues anzeigen">'
+        . esc_html((string)$count) . ' Issue(s)</a>';
 
     set_transient($cache_key, ['html' => $html], 600);
     return $html;
