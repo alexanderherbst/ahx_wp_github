@@ -239,11 +239,11 @@ function ahx_wp_github_repo_changes_build_issue_footer($issue_ids, $close_issues
     }, $clean_ids);
 
     $lines = [];
-    $lines[] = 'Refs ' . implode(', ', $refs);
+    $lines[] = 'Refs: ' . implode(', ', $refs);
 
     if ($close_issues) {
         foreach ($clean_ids as $num) {
-            $lines[] = 'Closes #' . intval($num);
+            $lines[] = 'Fixes #' . intval($num);
         }
     }
 
@@ -693,7 +693,7 @@ if (isset($_POST['commit_action'])) {
                         <p style="margin:8px 0 0 0;">
                             <label style="display:inline-flex;align-items:center;gap:6px;">
                                 <input type="checkbox" name="commit_close_issues" value="1">
-                                Gewählte Issues im Commit als erledigt markieren (Closes #...)
+                                Gewählte Issues im Commit als erledigt markieren (Fixes #...)
                             </label>
                         </p>
                     <?php else: ?>
@@ -701,6 +701,11 @@ if (isset($_POST['commit_action'])) {
                     <?php endif; ?>
                 </fieldset>
             <?php endif; ?>
+            <fieldset style="margin:12px 0; max-width:900px;">
+                <legend><strong>Vorschau finaler Commit-Message</strong></legend>
+                <p id="ahx-commit-preview-empty" style="margin:0 0 8px 0;color:#50575e;">Die Vorschau aktualisiert sich automatisch bei Änderungen.</p>
+                <pre id="ahx-commit-message-preview" style="white-space:pre-wrap;margin:0;background:#f6f7f7;border:1px solid #dcdcde;padding:10px;min-height:72px;"></pre>
+            </fieldset>
             <fieldset style="margin:12px 0;">
                 <legend><strong>Versionssprung:</strong></legend>
                 <label><input type="radio" name="version_bump" value="none" <?php checked($prefill_version_bump, 'none'); ?>> Kein Versionssprung (<?php echo esc_html($header_version_disp); ?>)</label>
@@ -747,3 +752,101 @@ if (isset($_POST['commit_action'])) {
 
     <p><a href="<?php echo esc_url($back_url); ?>" class="button">Zurück</a></p>
 </div>
+
+<?php if (!empty($files)) : ?>
+<script>
+(function() {
+    var form = document.getElementById('ahx-repo-commit-form');
+    if (!form) {
+        return;
+    }
+
+    var commitMessageEl = document.getElementById('commit_message');
+    var previewEl = document.getElementById('ahx-commit-message-preview');
+    var hintEl = document.getElementById('ahx-commit-preview-empty');
+
+    if (!commitMessageEl || !previewEl) {
+        return;
+    }
+
+    function collectIssueNumbers() {
+        var checked = form.querySelectorAll('input[name="commit_issue_ids[]"]:checked');
+        var values = [];
+        for (var i = 0; i < checked.length; i++) {
+            var num = parseInt(checked[i].value, 10);
+            if (!isNaN(num) && num > 0 && values.indexOf(num) === -1) {
+                values.push(num);
+            }
+        }
+        values.sort(function(a, b) { return a - b; });
+        return values;
+    }
+
+    function buildIssueFooter() {
+        var issueNumbers = collectIssueNumbers();
+        if (!issueNumbers.length) {
+            return '';
+        }
+
+        var refs = [];
+        for (var i = 0; i < issueNumbers.length; i++) {
+            refs.push('#' + issueNumbers[i]);
+        }
+
+        var lines = ['Refs: ' + refs.join(', ')];
+        var closeIssuesEl = form.querySelector('input[name="commit_close_issues"]');
+        var closeIssues = !!(closeIssuesEl && closeIssuesEl.checked);
+        if (closeIssues) {
+            for (var j = 0; j < issueNumbers.length; j++) {
+                lines.push('Fixes #' + issueNumbers[j]);
+            }
+        }
+
+        return lines.join('\n');
+    }
+
+    function renderPreview() {
+        var base = String(commitMessageEl.value || '').trim();
+        var footer = buildIssueFooter();
+        var finalMessage = '';
+
+        if (base !== '' && footer !== '') {
+            finalMessage = base + '\n\n' + footer;
+        } else if (base !== '') {
+            finalMessage = base;
+        } else if (footer !== '') {
+            finalMessage = footer;
+        }
+
+        previewEl.textContent = finalMessage !== '' ? finalMessage : '(leer)';
+        if (hintEl) {
+            hintEl.style.display = finalMessage !== '' ? 'none' : 'block';
+        }
+    }
+
+    form.addEventListener('input', function(event) {
+        var target = event.target;
+        if (!target) {
+            return;
+        }
+        var name = String(target.name || '');
+        if (target.id === 'commit_message' || name === 'commit_issue_ids[]' || name === 'commit_close_issues') {
+            renderPreview();
+        }
+    });
+
+    form.addEventListener('change', function(event) {
+        var target = event.target;
+        if (!target) {
+            return;
+        }
+        var name = String(target.name || '');
+        if (name === 'commit_issue_ids[]' || name === 'commit_close_issues') {
+            renderPreview();
+        }
+    });
+
+    renderPreview();
+})();
+</script>
+<?php endif; ?>

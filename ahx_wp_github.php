@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.11.1
+Version: v1.11.2
 Author: AHX
 Email: ahx@familie-herbst.net
 */
@@ -129,6 +129,44 @@ function ahx_wp_github_workflow_wizard_page() {
 }
 
 add_action('wp_ajax_ahx_repo_commit', 'ahx_wp_github_ajax_commit');
+
+if (!function_exists('ahx_wp_github_build_issue_footer_for_commit')) {
+    function ahx_wp_github_build_issue_footer_for_commit($issue_ids, $close_issues) {
+        if (!is_array($issue_ids) || empty($issue_ids)) {
+            return '';
+        }
+
+        $clean_ids = [];
+        foreach ($issue_ids as $id) {
+            $num = intval($id);
+            if ($num > 0) {
+                $clean_ids[] = $num;
+            }
+        }
+        $clean_ids = array_values(array_unique($clean_ids));
+        sort($clean_ids, SORT_NUMERIC);
+
+        if (empty($clean_ids)) {
+            return '';
+        }
+
+        $refs = array_map(function($num) {
+            return '#' . intval($num);
+        }, $clean_ids);
+
+        $lines = [];
+        $lines[] = 'Refs: ' . implode(', ', $refs);
+
+        if ($close_issues) {
+            foreach ($clean_ids as $num) {
+                $lines[] = 'Fixes #' . intval($num);
+            }
+        }
+
+        return implode("\n", $lines);
+    }
+}
+
 function ahx_wp_github_ajax_commit() {
     if (!current_user_can('manage_options')) {
         wp_send_json_error('Keine Berechtigung');
@@ -153,6 +191,18 @@ function ahx_wp_github_ajax_commit() {
         'allow_force_with_lease_on_rebase_conflict' => sanitize_text_field(wp_unslash($_POST['allow_force_with_lease_on_rebase_conflict'] ?? '')),
         'ajax' => '1'
     ];
+
+    $selected_issue_ids = wp_unslash($_POST['commit_issue_ids'] ?? []);
+    if (!is_array($selected_issue_ids)) {
+        $selected_issue_ids = [];
+    }
+    $close_selected_issues = sanitize_text_field(wp_unslash($_POST['commit_close_issues'] ?? '')) === '1';
+    $issue_footer = ahx_wp_github_build_issue_footer_for_commit($selected_issue_ids, $close_selected_issues);
+    if ($issue_footer !== '') {
+        $base_message = trim((string)$post_body['commit_message']);
+        $post_body['commit_message'] = $base_message === '' ? $issue_footer : ($base_message . "\n\n" . $issue_footer);
+    }
+
     $res = ahx_wp_github_process_commit_request($dir, $post_body);
     if (empty($res)) wp_send_json_error('Handler returned no response');
     wp_send_json_success($res);
