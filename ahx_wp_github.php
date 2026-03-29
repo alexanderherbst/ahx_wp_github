@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.11.3
+Version: v1.11.4
 Author: AHX
 Email: ahx@familie-herbst.net
 */
@@ -271,6 +271,11 @@ function ahx_wp_github_ajax_commit() {
     );
 
     $res = ahx_wp_github_process_commit_request($dir, $post_body);
+    if (!empty($res['success'])) {
+        if (function_exists('ahx_wp_github_clear_repo_caches_by_dir')) {
+            ahx_wp_github_clear_repo_caches_by_dir($dir);
+        }
+    }
     if (empty($res)) wp_send_json_error('Handler returned no response');
     wp_send_json_success($res);
 }
@@ -541,6 +546,27 @@ function ahx_wp_github_ajax_repo_row_status() {
 
 function ahx_wp_github_repo_issues_cache_key($repo_id, $dir_path) {
     return 'ahx_gh_repo_issues_' . intval($repo_id) . '_' . md5((string)$dir_path);
+}
+
+function ahx_wp_github_clear_repo_issues_cache($repo_id, $dir_path) {
+    delete_transient(ahx_wp_github_repo_issues_cache_key($repo_id, $dir_path));
+}
+
+function ahx_wp_github_clear_repo_caches_by_dir($dir_path) {
+    $dir_path = trim((string)$dir_path);
+    if ($dir_path === '') {
+        return;
+    }
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'ahx_wp_github';
+    $repo = $wpdb->get_row($wpdb->prepare("SELECT id, dir_path FROM $table WHERE dir_path = %s", $dir_path));
+    if (!$repo) {
+        return;
+    }
+
+    ahx_wp_github_clear_repo_status_cache(intval($repo->id), (string)$repo->dir_path);
+    ahx_wp_github_clear_repo_issues_cache(intval($repo->id), (string)$repo->dir_path);
 }
 
 function ahx_wp_github_is_github_remote_url($remote_url) {

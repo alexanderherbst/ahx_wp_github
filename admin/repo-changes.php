@@ -625,6 +625,10 @@ if (isset($_POST['commit_action'])) {
     $action = (string)$post_data['commit_action'];
     $action_label = ($action === 'commit_sync') ? 'Commit+Sync' : 'Commit';
 
+    if (!empty($result['success']) && function_exists('ahx_wp_github_clear_repo_caches_by_dir')) {
+        ahx_wp_github_clear_repo_caches_by_dir($dir);
+    }
+
     // Add admin notices for non-AJAX requests
     if (!$is_ajax) {
         if (!empty($result['success'])) {
