@@ -250,6 +250,71 @@ function ahx_wp_github_repo_changes_build_issue_footer($issue_ids, $close_issues
     return implode("\n", $lines);
 }
 
+function ahx_wp_github_repo_changes_apply_issue_references_to_message($base_message, $issue_ids, $close_issues) {
+    $base_message = trim((string)$base_message);
+
+    $clean_ids = [];
+    if (is_array($issue_ids)) {
+        foreach ($issue_ids as $id) {
+            $num = intval($id);
+            if ($num > 0) {
+                $clean_ids[] = $num;
+            }
+        }
+    }
+    $clean_ids = array_values(array_unique($clean_ids));
+    sort($clean_ids, SORT_NUMERIC);
+
+    if (empty($clean_ids)) {
+        return $base_message;
+    }
+
+    $refs = array_map(function($num) {
+        return '#' . intval($num);
+    }, $clean_ids);
+
+    $refs_inline = 'refs ' . implode(', ', $refs);
+    $fixes_inline_parts = [];
+    if ($close_issues) {
+        foreach ($clean_ids as $num) {
+            $fixes_inline_parts[] = 'fixes #' . intval($num);
+        }
+    }
+
+    $inline_parts = [$refs_inline];
+    if (!empty($fixes_inline_parts)) {
+        $inline_parts[] = implode(', ', $fixes_inline_parts);
+    }
+    $inline_suffix = ' (' . implode('; ', $inline_parts) . ')';
+
+    $first_line = $base_message;
+    $rest = '';
+    if (strpos($base_message, "\n") !== false) {
+        $segments = preg_split('/\r\n|\r|\n/', $base_message, 2);
+        $first_line = trim((string)($segments[0] ?? ''));
+        $rest = trim((string)($segments[1] ?? ''));
+    }
+    if ($first_line === '') {
+        $first_line = 'Update';
+    }
+
+    if (stripos($first_line, 'refs #') === false) {
+        $first_line .= $inline_suffix;
+    }
+
+    $issue_footer = ahx_wp_github_repo_changes_build_issue_footer($clean_ids, $close_issues);
+
+    $result = $first_line;
+    if ($rest !== '') {
+        $result .= "\n\n" . $rest;
+    }
+    if ($issue_footer !== '') {
+        $result .= "\n\n" . $issue_footer;
+    }
+
+    return trim($result);
+}
+
 ahx_wp_main_display_admin_notices();
 
 // Änderungen auslesen
@@ -550,11 +615,11 @@ if (isset($_POST['commit_action'])) {
         $selected_issue_ids = [];
     }
     $close_selected_issues = sanitize_text_field(wp_unslash($_POST['commit_close_issues'] ?? '')) === '1';
-    $issue_footer = ahx_wp_github_repo_changes_build_issue_footer($selected_issue_ids, $close_selected_issues);
-    if ($issue_footer !== '') {
-        $base_message = trim((string)$post_data['commit_message']);
-        $post_data['commit_message'] = $base_message === '' ? $issue_footer : ($base_message . "\n\n" . $issue_footer);
-    }
+    $post_data['commit_message'] = ahx_wp_github_repo_changes_apply_issue_references_to_message(
+        (string)$post_data['commit_message'],
+        $selected_issue_ids,
+        $close_selected_issues
+    );
 
     $result = ahx_wp_github_process_commit_request($dir, $post_data);
     $action = (string)$post_data['commit_action'];
@@ -805,17 +870,59 @@ if (isset($_POST['commit_action'])) {
         return lines.join('\n');
     }
 
+    function buildInlineIssueSuffix() {
+        var issueNumbers = collectIssueNumbers();
+        if (!issueNumbers.length) {
+            return '';
+        }
+
+        var refs = [];
+        for (var i = 0; i < issueNumbers.length; i++) {
+            refs.push('#' + issueNumbers[i]);
+        }
+
+        var parts = ['refs ' + refs.join(', ')];
+        var closeIssuesEl = form.querySelector('input[name="commit_close_issues"]');
+        var closeIssues = !!(closeIssuesEl && closeIssuesEl.checked);
+        if (closeIssues) {
+            var fixesParts = [];
+            for (var j = 0; j < issueNumbers.length; j++) {
+                fixesParts.push('fixes #' + issueNumbers[j]);
+            }
+            parts.push(fixesParts.join(', '));
+        }
+
+        return ' (' + parts.join('; ') + ')';
+    }
+
     function renderPreview() {
         var base = String(commitMessageEl.value || '').trim();
         var footer = buildIssueFooter();
+        var inlineSuffix = buildInlineIssueSuffix();
         var finalMessage = '';
 
-        if (base !== '' && footer !== '') {
-            finalMessage = base + '\n\n' + footer;
-        } else if (base !== '') {
-            finalMessage = base;
-        } else if (footer !== '') {
-            finalMessage = footer;
+        var firstLine = base;
+        var rest = '';
+        if (base.indexOf('\n') !== -1) {
+            var splitIndex = base.indexOf('\n');
+            firstLine = base.substring(0, splitIndex).trim();
+            rest = base.substring(splitIndex + 1).trim();
+        }
+        if (!firstLine && inlineSuffix) {
+            firstLine = 'Update';
+        }
+        if (firstLine && inlineSuffix && firstLine.toLowerCase().indexOf('refs #') === -1) {
+            firstLine += inlineSuffix;
+        }
+
+        if (firstLine) {
+            finalMessage = firstLine;
+        }
+        if (rest) {
+            finalMessage += (finalMessage ? '\n\n' : '') + rest;
+        }
+        if (footer) {
+            finalMessage += (finalMessage ? '\n\n' : '') + footer;
         }
 
         previewEl.textContent = finalMessage !== '' ? finalMessage : '(leer)';

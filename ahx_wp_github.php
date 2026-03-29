@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.11.2
+Version: v1.11.3
 Author: AHX
 Email: ahx@familie-herbst.net
 */
@@ -167,6 +167,73 @@ if (!function_exists('ahx_wp_github_build_issue_footer_for_commit')) {
     }
 }
 
+if (!function_exists('ahx_wp_github_apply_issue_references_to_message')) {
+    function ahx_wp_github_apply_issue_references_to_message($base_message, $issue_ids, $close_issues) {
+        $base_message = trim((string)$base_message);
+
+        $clean_ids = [];
+        if (is_array($issue_ids)) {
+            foreach ($issue_ids as $id) {
+                $num = intval($id);
+                if ($num > 0) {
+                    $clean_ids[] = $num;
+                }
+            }
+        }
+        $clean_ids = array_values(array_unique($clean_ids));
+        sort($clean_ids, SORT_NUMERIC);
+
+        if (empty($clean_ids)) {
+            return $base_message;
+        }
+
+        $refs = array_map(function($num) {
+            return '#' . intval($num);
+        }, $clean_ids);
+
+        $refs_inline = 'refs ' . implode(', ', $refs);
+        $fixes_inline_parts = [];
+        if ($close_issues) {
+            foreach ($clean_ids as $num) {
+                $fixes_inline_parts[] = 'fixes #' . intval($num);
+            }
+        }
+
+        $inline_parts = [$refs_inline];
+        if (!empty($fixes_inline_parts)) {
+            $inline_parts[] = implode(', ', $fixes_inline_parts);
+        }
+        $inline_suffix = ' (' . implode('; ', $inline_parts) . ')';
+
+        $first_line = $base_message;
+        $rest = '';
+        if (strpos($base_message, "\n") !== false) {
+            $segments = preg_split('/\r\n|\r|\n/', $base_message, 2);
+            $first_line = trim((string)($segments[0] ?? ''));
+            $rest = trim((string)($segments[1] ?? ''));
+        }
+        if ($first_line === '') {
+            $first_line = 'Update';
+        }
+
+        if (stripos($first_line, 'refs #') === false) {
+            $first_line .= $inline_suffix;
+        }
+
+        $issue_footer = ahx_wp_github_build_issue_footer_for_commit($clean_ids, $close_issues);
+
+        $result = $first_line;
+        if ($rest !== '') {
+            $result .= "\n\n" . $rest;
+        }
+        if ($issue_footer !== '') {
+            $result .= "\n\n" . $issue_footer;
+        }
+
+        return trim($result);
+    }
+}
+
 function ahx_wp_github_ajax_commit() {
     if (!current_user_can('manage_options')) {
         wp_send_json_error('Keine Berechtigung');
@@ -197,11 +264,11 @@ function ahx_wp_github_ajax_commit() {
         $selected_issue_ids = [];
     }
     $close_selected_issues = sanitize_text_field(wp_unslash($_POST['commit_close_issues'] ?? '')) === '1';
-    $issue_footer = ahx_wp_github_build_issue_footer_for_commit($selected_issue_ids, $close_selected_issues);
-    if ($issue_footer !== '') {
-        $base_message = trim((string)$post_body['commit_message']);
-        $post_body['commit_message'] = $base_message === '' ? $issue_footer : ($base_message . "\n\n" . $issue_footer);
-    }
+    $post_body['commit_message'] = ahx_wp_github_apply_issue_references_to_message(
+        (string)$post_body['commit_message'],
+        $selected_issue_ids,
+        $close_selected_issues
+    );
 
     $res = ahx_wp_github_process_commit_request($dir, $post_body);
     if (empty($res)) wp_send_json_error('Handler returned no response');
