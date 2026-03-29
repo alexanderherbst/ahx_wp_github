@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.10.0
+Version: v1.11.0
 Author: AHX
 */
 
@@ -418,6 +418,144 @@ function ahx_wp_github_ajax_repo_row_status() {
         $html = '<span title="Git-Status konnte nicht gelesen werden" style="color:#b32d2e;">Statusfehler</span>';
     }
 
+    wp_send_json_success(['html' => $html]);
+}
+
+function ahx_wp_github_repo_issues_cache_key($repo_id, $dir_path) {
+    return 'ahx_gh_repo_issues_' . intval($repo_id) . '_' . md5((string)$dir_path);
+}
+
+function ahx_wp_github_is_github_remote_url($remote_url) {
+    $remote_url = trim((string)$remote_url);
+    if ($remote_url === '') {
+        return false;
+    }
+
+    return preg_match('#^(https?://([^/@]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:|git://github\.com/)#i', $remote_url) === 1;
+}
+
+function ahx_wp_github_parse_owner_repo_from_remote($remote_url) {
+    $remote_url = trim((string)$remote_url);
+    if ($remote_url === '') {
+        return ['', ''];
+    }
+
+    if (preg_match('#github\.com[:/](.+?)(?:\.git)?$#', $remote_url, $m)) {
+        $owner_repo = trim((string)$m[1], '/');
+        $parts = explode('/', $owner_repo, 2);
+        $owner = trim((string)($parts[0] ?? ''));
+        $repo = trim((string)($parts[1] ?? ''));
+        return [$owner, $repo];
+    }
+
+    return ['', ''];
+}
+
+function ahx_wp_github_get_repo_issues_badge_html($repo_id, $dir_path) {
+    $cache_key = ahx_wp_github_repo_issues_cache_key($repo_id, $dir_path);
+    $cached = get_transient($cache_key);
+    if (is_array($cached) && array_key_exists('html', $cached)) {
+        return (string)$cached['html'];
+    }
+
+    $html = '';
+
+    $git_dir = $dir_path . DIRECTORY_SEPARATOR . '.git';
+    if (!is_dir($git_dir)) {
+        set_transient($cache_key, ['html' => $html], 300);
+        return $html;
+    }
+
+    $origin_res = ahx_wp_github_run_git($dir_path, 'remote get-url origin', 10);
+    if (intval($origin_res['exit'] ?? 1) !== 0) {
+        $html = '<span style="color:#8c8f94;">Issues: -</span>';
+        set_transient($cache_key, ['html' => $html], 300);
+        return $html;
+    }
+
+    $remote_url = trim((string)($origin_res['output'] ?? ''));
+    if (!ahx_wp_github_is_github_remote_url($remote_url)) {
+        $html = '<span style="color:#8c8f94;">Issues: -</span>';
+        set_transient($cache_key, ['html' => $html], 600);
+        return $html;
+    }
+
+    list($owner, $repo) = ahx_wp_github_parse_owner_repo_from_remote($remote_url);
+    if ($owner === '' || $repo === '') {
+        $html = '<span style="color:#8c8f94;">Issues: -</span>';
+        set_transient($cache_key, ['html' => $html], 600);
+        return $html;
+    }
+
+    $token = trim((string)get_option('ahx_wp_main_github_token', ''));
+    $headers = [
+        'User-Agent' => 'AHX WP GitHub',
+        'Accept' => 'application/vnd.github+json',
+    ];
+    if ($token !== '') {
+        $headers['Authorization'] = 'Bearer ' . $token;
+    }
+
+    $query = rawurlencode('repo:' . $owner . '/' . $repo . ' type:issue state:open');
+    $url = 'https://api.github.com/search/issues?q=' . $query . '&per_page=1';
+    $response = wp_remote_get($url, [
+        'headers' => $headers,
+        'timeout' => 8,
+    ]);
+
+    if (is_wp_error($response)) {
+        $html = '<span style="color:#8c8f94;" title="' . esc_attr($response->get_error_message()) . '">Issues: -</span>';
+        set_transient($cache_key, ['html' => $html], 120);
+        return $html;
+    }
+
+    $status = intval(wp_remote_retrieve_response_code($response));
+    $body = json_decode((string)wp_remote_retrieve_body($response), true);
+    if ($status < 200 || $status >= 300 || !is_array($body)) {
+        $api_message = is_array($body) ? trim((string)($body['message'] ?? '')) : '';
+        $title = $api_message !== '' ? $api_message : ('HTTP ' . $status);
+        $html = '<span style="color:#8c8f94;" title="' . esc_attr($title) . '">Issues: -</span>';
+        set_transient($cache_key, ['html' => $html], 120);
+        return $html;
+    }
+
+    $count = max(0, intval($body['total_count'] ?? 0));
+    $issues_url = 'https://github.com/' . rawurlencode($owner) . '/' . rawurlencode($repo) . '/issues?q=is%3Aissue+is%3Aopen';
+    $badge_style = 'display:inline-block;min-width:18px;padding:0 6px;border-radius:999px;background:#2271b1;color:#fff;font-size:11px;line-height:18px;text-align:center;';
+
+    $html = '<a href="' . esc_url($issues_url) . '" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">'
+        . '<span style="color:#1d2327;">Issues</span> '
+        . '<span style="' . esc_attr($badge_style) . '">' . esc_html((string)$count) . '</span>'
+        . '</a>';
+
+    set_transient($cache_key, ['html' => $html], 600);
+    return $html;
+}
+
+add_action('wp_ajax_ahx_repo_row_issues', 'ahx_wp_github_ajax_repo_row_issues');
+function ahx_wp_github_ajax_repo_row_issues() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error('Keine Berechtigung');
+    }
+
+    $nonce = sanitize_text_field(wp_unslash($_POST['nonce'] ?? ''));
+    if (!wp_verify_nonce($nonce, 'ahx_repo_row_issues')) {
+        wp_send_json_error('Ungültiger Nonce');
+    }
+
+    $repo_id = intval(wp_unslash($_POST['repo_id'] ?? 0));
+    if ($repo_id <= 0) {
+        wp_send_json_error('Ungültige Repository-ID');
+    }
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'ahx_wp_github';
+    $repo = $wpdb->get_row($wpdb->prepare("SELECT id, dir_path FROM $table WHERE id = %d", $repo_id));
+    if (!$repo || !is_dir($repo->dir_path)) {
+        wp_send_json_success(['html' => '']);
+    }
+
+    $html = ahx_wp_github_get_repo_issues_badge_html(intval($repo->id), (string)$repo->dir_path);
     wp_send_json_success(['html' => $html]);
 }
 

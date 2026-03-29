@@ -14,6 +14,101 @@ if (!function_exists('ahx_wp_github_is_github_remote_url')) {
     }
 }
 
+if (!function_exists('ahx_wp_github_repo_details_parse_owner_repo')) {
+    function ahx_wp_github_repo_details_parse_owner_repo($remote_url) {
+        if (function_exists('ahx_wp_github_parse_owner_repo')) {
+            return ahx_wp_github_parse_owner_repo($remote_url);
+        }
+
+        $remote_url = trim((string)$remote_url);
+        if ($remote_url === '') {
+            return ['', ''];
+        }
+
+        if (preg_match('#github\.com[:/](.+?)(?:\.git)?$#', $remote_url, $m)) {
+            $owner_repo = trim((string)$m[1], '/');
+            $parts = explode('/', $owner_repo, 2);
+            $owner = trim((string)($parts[0] ?? ''));
+            $repo = trim((string)($parts[1] ?? ''));
+            return [$owner, $repo];
+        }
+
+        return ['', ''];
+    }
+}
+
+if (!function_exists('ahx_wp_github_repo_details_fetch_open_issues')) {
+    function ahx_wp_github_repo_details_fetch_open_issues($owner, $repo) {
+        $result = [
+            'ok' => false,
+            'count' => 0,
+            'items' => [],
+            'error' => '',
+            'status' => 0,
+        ];
+
+        $owner = trim((string)$owner);
+        $repo = trim((string)$repo);
+        if ($owner === '' || $repo === '') {
+            $result['error'] = 'Owner/Repository konnte nicht bestimmt werden.';
+            return $result;
+        }
+
+        $token = trim((string)get_option('ahx_wp_main_github_token', ''));
+        $headers = [
+            'User-Agent' => 'AHX WP GitHub',
+            'Accept' => 'application/vnd.github+json',
+        ];
+        if ($token !== '') {
+            $headers['Authorization'] = 'Bearer ' . $token;
+        }
+
+        $query = rawurlencode('repo:' . $owner . '/' . $repo . ' type:issue state:open');
+        $url = 'https://api.github.com/search/issues?q=' . $query . '&sort=updated&order=desc&per_page=5';
+        $response = wp_remote_get($url, [
+            'headers' => $headers,
+            'timeout' => 20,
+        ]);
+
+        if (is_wp_error($response)) {
+            $result['error'] = 'GitHub-API nicht erreichbar: ' . $response->get_error_message();
+            return $result;
+        }
+
+        $status = intval(wp_remote_retrieve_response_code($response));
+        $body = json_decode((string)wp_remote_retrieve_body($response), true);
+        $result['status'] = $status;
+
+        if ($status < 200 || $status >= 300 || !is_array($body)) {
+            $message = is_array($body) ? trim((string)($body['message'] ?? '')) : '';
+            if ($message === '') {
+                $message = 'Unbekannter Fehler';
+            }
+            $result['error'] = 'GitHub-API Fehler (HTTP ' . $status . '): ' . $message;
+            return $result;
+        }
+
+        $result['ok'] = true;
+        $result['count'] = max(0, intval($body['total_count'] ?? 0));
+
+        $items = is_array($body['items'] ?? null) ? $body['items'] : [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $result['items'][] = [
+                'number' => intval($item['number'] ?? 0),
+                'title' => trim((string)($item['title'] ?? '')),
+                'url' => trim((string)($item['html_url'] ?? '')),
+                'user' => trim((string)($item['user']['login'] ?? '')),
+                'updated_at' => trim((string)($item['updated_at'] ?? '')),
+            ];
+        }
+
+        return $result;
+    }
+}
+
 $dir = isset($_GET['dir']) ? sanitize_text_field(wp_unslash($_GET['dir'])) : '';
 if (!$dir || !is_dir($dir)) {
     echo '<div class="error"><p>Ungültiges oder nicht vorhandenes Verzeichnis.</p></div>';
@@ -265,6 +360,16 @@ $current_branch = '';
 $default_branch = '';
 $local_branches = [];
 $remote_branches = [];
+$github_open_issues = [
+    'ok' => false,
+    'count' => 0,
+    'items' => [],
+    'error' => '',
+    'status' => 0,
+    'enabled' => false,
+    'owner' => '',
+    'repo' => '',
+];
 if ($has_git_repo) {
 
     // Aktueller Branch
@@ -332,6 +437,14 @@ if ($has_git_repo) {
                 'is_default' => ($default_branch !== '' && $name === $default_branch),
             ];
         }
+    }
+
+    if ($origin_remote_url_current !== '' && ahx_wp_github_is_github_remote_url($origin_remote_url_current)) {
+        list($owner, $repo) = ahx_wp_github_repo_details_parse_owner_repo($origin_remote_url_current);
+        $github_open_issues = ahx_wp_github_repo_details_fetch_open_issues($owner, $repo);
+        $github_open_issues['enabled'] = true;
+        $github_open_issues['owner'] = $owner;
+        $github_open_issues['repo'] = $repo;
     }
 }
 
@@ -473,6 +586,45 @@ $back_url = admin_url('admin.php?page=ahx-wp-github');
             </table>
         <?php else: ?>
             <p>Keine Remote-Branches gefunden.</p>
+        <?php endif; ?>
+
+        <h2 style="margin-top:24px;">GitHub</h2>
+        <?php if (empty($github_open_issues['enabled'])): ?>
+            <p>Keine GitHub-Remote-URL erkannt. Offene Issues können daher nicht abgerufen werden.</p>
+        <?php elseif (empty($github_open_issues['ok'])): ?>
+            <p><strong>Offene Issues:</strong> konnten nicht geladen werden.</p>
+            <p style="color:#a00;"><?php echo esc_html((string)($github_open_issues['error'] ?? 'Unbekannter Fehler')); ?></p>
+        <?php else: ?>
+            <p>
+                <strong>Offene Issues:</strong>
+                <?php echo esc_html((string)intval($github_open_issues['count'] ?? 0)); ?>
+                (<?php echo esc_html((string)$github_open_issues['owner']); ?>/<?php echo esc_html((string)$github_open_issues['repo']); ?>)
+            </p>
+            <?php if (!empty($github_open_issues['items'])): ?>
+                <table class="widefat striped">
+                    <thead>
+                        <tr>
+                            <th>#</th><th>Titel</th><th>Erstellt von</th><th>Zuletzt aktualisiert</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($github_open_issues['items'] as $issue): ?>
+                            <tr>
+                                <td><?php echo esc_html((string)intval($issue['number'] ?? 0)); ?></td>
+                                <td>
+                                    <a href="<?php echo esc_url((string)($issue['url'] ?? '')); ?>" target="_blank" rel="noopener noreferrer">
+                                        <?php echo esc_html((string)($issue['title'] ?? '')); ?>
+                                    </a>
+                                </td>
+                                <td><?php echo esc_html((string)($issue['user'] ?? '')); ?></td>
+                                <td><?php echo esc_html((string)($issue['updated_at'] ?? '')); ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php else: ?>
+                <p>Keine offenen Issues vorhanden.</p>
+            <?php endif; ?>
         <?php endif; ?>
     <?php endif; ?>
 

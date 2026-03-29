@@ -157,6 +157,116 @@ function ahx_wp_github_admin_get_repo_version($dir, $name = '') {
     return '—';
 }
 
+function ahx_wp_github_admin_parse_owner_repo($remote_url) {
+    if (function_exists('ahx_wp_github_parse_owner_repo')) {
+        return ahx_wp_github_parse_owner_repo($remote_url);
+    }
+
+    $remote_url = trim((string)$remote_url);
+    if ($remote_url === '') {
+        return ['', ''];
+    }
+
+    if (preg_match('#github\.com[:/](.+?)(?:\.git)?$#', $remote_url, $m)) {
+        $owner_repo = trim((string)$m[1], '/');
+        $parts = explode('/', $owner_repo, 2);
+        return [trim((string)($parts[0] ?? '')), trim((string)($parts[1] ?? ''))];
+    }
+
+    return ['', ''];
+}
+
+function ahx_wp_github_admin_is_github_remote_url($remote_url) {
+    $remote_url = trim((string)$remote_url);
+    if ($remote_url === '') {
+        return false;
+    }
+
+    return preg_match('#^(https?://([^/@]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:|git://github\.com/)#i', $remote_url) === 1;
+}
+
+function ahx_wp_github_admin_get_open_issues_badge_html($repo_id, $dir) {
+    $repo_id = intval($repo_id);
+    $dir = trim((string)$dir);
+    if ($repo_id <= 0 || $dir === '') {
+        return '';
+    }
+
+    $cache_key = 'ahx_gh_repo_issues_' . $repo_id . '_' . md5($dir);
+    $cached = get_transient($cache_key);
+    if (is_array($cached) && array_key_exists('html', $cached)) {
+        return (string)$cached['html'];
+    }
+
+    $git_dir = $dir . DIRECTORY_SEPARATOR . '.git';
+    if (!is_dir($git_dir)) {
+        set_transient($cache_key, ['html' => ''], 120);
+        return '';
+    }
+
+    $origin_res = ahx_wp_github_admin_run_git($dir, 'remote get-url origin', 12, false);
+    if (intval($origin_res['exit'] ?? 1) !== 0) {
+        set_transient($cache_key, ['html' => '<span style="color:#8c8f94;">Issues: -</span>'], 120);
+        return '<span style="color:#8c8f94;">Issues: -</span>';
+    }
+
+    $remote_url = trim((string)($origin_res['output'] ?? ''));
+    if (!ahx_wp_github_admin_is_github_remote_url($remote_url)) {
+        set_transient($cache_key, ['html' => '<span style="color:#8c8f94;">Issues: -</span>'], 300);
+        return '<span style="color:#8c8f94;">Issues: -</span>';
+    }
+
+    list($owner, $repo) = ahx_wp_github_admin_parse_owner_repo($remote_url);
+    if ($owner === '' || $repo === '') {
+        set_transient($cache_key, ['html' => '<span style="color:#8c8f94;">Issues: -</span>'], 300);
+        return '<span style="color:#8c8f94;">Issues: -</span>';
+    }
+
+    $token = trim((string)get_option('ahx_wp_main_github_token', ''));
+    $headers = [
+        'User-Agent' => 'AHX WP GitHub',
+        'Accept' => 'application/vnd.github+json',
+    ];
+    if ($token !== '') {
+        $headers['Authorization'] = 'Bearer ' . $token;
+    }
+
+    $query = rawurlencode('repo:' . $owner . '/' . $repo . ' type:issue state:open');
+    $url = 'https://api.github.com/search/issues?q=' . $query . '&per_page=1';
+    $response = wp_remote_get($url, [
+        'headers' => $headers,
+        'timeout' => 15,
+    ]);
+
+    if (is_wp_error($response)) {
+        $html = '<span style="color:#8c8f94;" title="' . esc_attr($response->get_error_message()) . '">Issues: -</span>';
+        set_transient($cache_key, ['html' => $html], 120);
+        return $html;
+    }
+
+    $status = intval(wp_remote_retrieve_response_code($response));
+    $body = json_decode((string)wp_remote_retrieve_body($response), true);
+    if ($status < 200 || $status >= 300 || !is_array($body)) {
+        $api_message = is_array($body) ? trim((string)($body['message'] ?? '')) : '';
+        $title = $api_message !== '' ? $api_message : ('HTTP ' . $status);
+        $html = '<span style="color:#8c8f94;" title="' . esc_attr($title) . '">Issues: -</span>';
+        set_transient($cache_key, ['html' => $html], 120);
+        return $html;
+    }
+
+    $count = max(0, intval($body['total_count'] ?? 0));
+    $issues_url = 'https://github.com/' . rawurlencode($owner) . '/' . rawurlencode($repo) . '/issues?q=is%3Aissue+is%3Aopen';
+
+    $badge_style = 'display:inline-block;min-width:18px;padding:0 6px;border-radius:999px;background:#2271b1;color:#fff;font-size:11px;line-height:18px;text-align:center;';
+    $html = '<a href="' . esc_url($issues_url) . '" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">'
+        . '<span style="color:#1d2327;">Issues</span> '
+        . '<span style="' . esc_attr($badge_style) . '">' . esc_html((string)$count) . '</span>'
+        . '</a>';
+
+    set_transient($cache_key, ['html' => $html], 300);
+    return $html;
+}
+
 // Änderungen-Ansicht einbinden, falls gewünscht, und sofort beenden
 $repo_changes_flag = sanitize_text_field(wp_unslash($_GET['repo_changes'] ?? ''));
 $repo_changes_dir = sanitize_text_field(wp_unslash($_GET['dir'] ?? ''));
@@ -305,7 +415,7 @@ ahx_wp_main_display_admin_notices();
     <h2>Erfasste Verzeichnisse</h2>
     <table class="widefat">
         <thead>
-            <tr><th>ID</th><th>Name</th><th>Typ</th><th>Version</th><th>Verzeichnis</th><th>Erfasst am</th><th>Änderungen</th></tr>
+            <tr><th>ID</th><th>Name</th><th>Typ</th><th>Version</th><th>Verzeichnis</th><th>Erfasst am</th><th>Änderungen</th><th>Issues</th><th>Aktion</th></tr>
         </thead>
         <tbody>
         <?php
@@ -320,8 +430,10 @@ ahx_wp_main_display_admin_notices();
 
                 if (is_dir($git_dir)) {
                     $btn_changes = '<span class="ahx-repo-row-status" data-repo-id="' . intval($row->id) . '" style="color:#50575e;">Prüfe…</span>';
+                    $issues_badge = '<span class="ahx-repo-row-issues" data-repo-id="' . intval($row->id) . '" style="color:#8c8f94;">Issues…</span>';
                 } else {
                     $btn_changes = '';
+                    $issues_badge = '';
                 }
 
                 echo '<tr>';
@@ -331,11 +443,13 @@ ahx_wp_main_display_admin_notices();
                 echo '<td>' . esc_html($repo_version) . '</td>';
                 echo '<td>' . esc_html(preg_replace('/[\\\/]+/', DIRECTORY_SEPARATOR, $row->dir_path)) . '</td>';
                 echo '<td>' . esc_html($row->created_at) . '</td>';
-                echo '<td><div style="display:inline-flex;gap:5px;align-items:center">' . $btn_changes . '<a href="' . esc_url($details_url) . '" class="button">Details</a></div></td>';
+                echo '<td>' . $btn_changes . '</td>';
+                echo '<td>' . $issues_badge . '</td>';
+                echo '<td><a href="' . esc_url($details_url) . '" class="button">Details</a></td>';
                 echo '</tr>';
             }
         } else {
-            echo '<tr><td colspan="7">Keine Einträge gefunden.</td></tr>';
+            echo '<tr><td colspan="9">Keine Einträge gefunden.</td></tr>';
         }
         ?>
         </tbody>
@@ -346,12 +460,14 @@ echo "</div>";
 
 $ahx_dir_browse_nonce = wp_create_nonce('ahx_repo_browse');
 $ahx_repo_row_status_nonce = wp_create_nonce('ahx_repo_row_status');
+$ahx_repo_row_issues_nonce = wp_create_nonce('ahx_repo_row_issues');
 ?>
 <script>
 (function() {
     const ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>;
     const browseNonce = <?php echo wp_json_encode($ahx_dir_browse_nonce); ?>;
     const repoRowStatusNonce = <?php echo wp_json_encode($ahx_repo_row_status_nonce); ?>;
+    const repoRowIssuesNonce = <?php echo wp_json_encode($ahx_repo_row_issues_nonce); ?>;
     const dirInput = document.getElementById('ahx_github_dir');
     const openBtn = document.getElementById('ahx-open-dir-picker');
     const modal = document.getElementById('ahx-dir-picker-modal');
@@ -567,6 +683,109 @@ $ahx_repo_row_status_nonce = wp_create_nonce('ahx_repo_row_status');
         processNext();
     }
 
+    function loadRepoRowIssuesOnViewport() {
+        const issueEls = Array.prototype.slice.call(document.querySelectorAll('.ahx-repo-row-issues[data-repo-id]'));
+        if (!issueEls.length) {
+            return;
+        }
+
+        const queue = [];
+        let queueRunning = false;
+
+        function processQueue() {
+            if (queueRunning || queue.length === 0) {
+                return;
+            }
+
+            queueRunning = true;
+            const el = queue.shift();
+            if (!el || el.getAttribute('data-issues-loaded') === '1') {
+                queueRunning = false;
+                processQueue();
+                return;
+            }
+
+            const repoId = String(el.getAttribute('data-repo-id') || '');
+            if (!repoId) {
+                el.setAttribute('data-issues-loaded', '1');
+                queueRunning = false;
+                processQueue();
+                return;
+            }
+
+            const formData = new URLSearchParams();
+            formData.append('action', 'ahx_repo_row_issues');
+            formData.append('nonce', repoRowIssuesNonce);
+            formData.append('repo_id', repoId);
+
+            fetch(ajaxUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                },
+                body: formData.toString(),
+                credentials: 'same-origin'
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(payload) {
+                if (payload && payload.success && payload.data) {
+                    const html = String(payload.data.html || '');
+                    el.innerHTML = html.trim() === '' ? '<span style="color:#8c8f94;">Issues: -</span>' : html;
+                    return;
+                }
+                el.textContent = 'Issues: -';
+                el.style.color = '#8c8f94';
+            })
+            .catch(function() {
+                el.textContent = 'Issues: -';
+                el.style.color = '#8c8f94';
+            })
+            .finally(function() {
+                el.setAttribute('data-issues-loaded', '1');
+                queueRunning = false;
+                processQueue();
+            });
+        }
+
+        function enqueue(el) {
+            if (!el || el.getAttribute('data-issues-loaded') === '1') {
+                return;
+            }
+            if (queue.indexOf(el) !== -1) {
+                return;
+            }
+            queue.push(el);
+            processQueue();
+        }
+
+        if ('IntersectionObserver' in window) {
+            const observer = new IntersectionObserver(function(entries) {
+                entries.forEach(function(entry) {
+                    if (!entry.isIntersecting) {
+                        return;
+                    }
+                    const el = entry.target;
+                    observer.unobserve(el);
+                    enqueue(el);
+                });
+            }, {
+                root: null,
+                rootMargin: '220px 0px',
+                threshold: 0.01
+            });
+
+            issueEls.forEach(function(el) {
+                observer.observe(el);
+            });
+            return;
+        }
+
+        issueEls.forEach(function(el) {
+            enqueue(el);
+        });
+    }
+
     loadRepoRowStatusesSequentially();
+    loadRepoRowIssuesOnViewport();
 })();
 </script>

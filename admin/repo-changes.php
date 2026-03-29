@@ -103,6 +103,153 @@ function ahx_wp_github_repo_changes_find_untracked_empty_dirs($dir, $timeout = 2
     return $result;
 }
 
+function ahx_wp_github_repo_changes_parse_owner_repo($remote_url) {
+    if (function_exists('ahx_wp_github_parse_owner_repo_from_remote')) {
+        return ahx_wp_github_parse_owner_repo_from_remote($remote_url);
+    }
+
+    $remote_url = trim((string)$remote_url);
+    if ($remote_url === '') {
+        return ['', ''];
+    }
+
+    if (preg_match('#github\.com[:/](.+?)(?:\.git)?$#', $remote_url, $m)) {
+        $owner_repo = trim((string)$m[1], '/');
+        $parts = explode('/', $owner_repo, 2);
+        $owner = trim((string)($parts[0] ?? ''));
+        $repo = trim((string)($parts[1] ?? ''));
+        return [$owner, $repo];
+    }
+
+    return ['', ''];
+}
+
+function ahx_wp_github_repo_changes_is_github_remote($remote_url) {
+    $remote_url = trim((string)$remote_url);
+    if ($remote_url === '') {
+        return false;
+    }
+
+    return preg_match('#^(https?://([^/@]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:|git://github\.com/)#i', $remote_url) === 1;
+}
+
+function ahx_wp_github_repo_changes_fetch_open_issues($dir) {
+    $result = [
+        'enabled' => false,
+        'items' => [],
+        'error' => '',
+        'owner' => '',
+        'repo' => '',
+    ];
+
+    $origin_res = ahx_wp_github_repo_changes_git($dir, 'remote get-url origin', 12);
+    if (intval($origin_res['exit'] ?? 1) !== 0) {
+        return $result;
+    }
+
+    $remote_url = trim((string)($origin_res['output'] ?? ''));
+    if (!ahx_wp_github_repo_changes_is_github_remote($remote_url)) {
+        return $result;
+    }
+
+    list($owner, $repo) = ahx_wp_github_repo_changes_parse_owner_repo($remote_url);
+    if ($owner === '' || $repo === '') {
+        $result['enabled'] = true;
+        $result['error'] = 'GitHub owner/repo konnte nicht aus origin ermittelt werden.';
+        return $result;
+    }
+
+    $result['enabled'] = true;
+    $result['owner'] = $owner;
+    $result['repo'] = $repo;
+
+    $token = trim((string)get_option('ahx_wp_main_github_token', ''));
+    $headers = [
+        'User-Agent' => 'AHX WP GitHub',
+        'Accept' => 'application/vnd.github+json',
+    ];
+    if ($token !== '') {
+        $headers['Authorization'] = 'Bearer ' . $token;
+    }
+
+    $query = rawurlencode('repo:' . $owner . '/' . $repo . ' type:issue state:open');
+    $url = 'https://api.github.com/search/issues?q=' . $query . '&sort=updated&order=desc&per_page=20';
+    $response = wp_remote_get($url, [
+        'headers' => $headers,
+        'timeout' => 15,
+    ]);
+
+    if (is_wp_error($response)) {
+        $result['error'] = 'Issues konnten nicht geladen werden: ' . $response->get_error_message();
+        return $result;
+    }
+
+    $status = intval(wp_remote_retrieve_response_code($response));
+    $body = json_decode((string)wp_remote_retrieve_body($response), true);
+    if ($status < 200 || $status >= 300 || !is_array($body)) {
+        $msg = is_array($body) ? trim((string)($body['message'] ?? '')) : '';
+        if ($msg === '') {
+            $msg = 'HTTP ' . $status;
+        }
+        $result['error'] = 'Issues konnten nicht geladen werden: ' . $msg;
+        return $result;
+    }
+
+    $items = is_array($body['items'] ?? null) ? $body['items'] : [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $number = intval($item['number'] ?? 0);
+        if ($number <= 0) {
+            continue;
+        }
+        $result['items'][] = [
+            'number' => $number,
+            'title' => trim((string)($item['title'] ?? '')),
+            'html_url' => trim((string)($item['html_url'] ?? '')),
+            'updated_at' => trim((string)($item['updated_at'] ?? '')),
+        ];
+    }
+
+    return $result;
+}
+
+function ahx_wp_github_repo_changes_build_issue_footer($issue_ids, $close_issues) {
+    if (!is_array($issue_ids) || empty($issue_ids)) {
+        return '';
+    }
+
+    $clean_ids = [];
+    foreach ($issue_ids as $id) {
+        $num = intval($id);
+        if ($num > 0) {
+            $clean_ids[] = $num;
+        }
+    }
+    $clean_ids = array_values(array_unique($clean_ids));
+    sort($clean_ids, SORT_NUMERIC);
+
+    if (empty($clean_ids)) {
+        return '';
+    }
+
+    $refs = array_map(function($num) {
+        return '#' . intval($num);
+    }, $clean_ids);
+
+    $lines = [];
+    $lines[] = 'Refs ' . implode(', ', $refs);
+
+    if ($close_issues) {
+        foreach ($clean_ids as $num) {
+            $lines[] = 'Closes #' . intval($num);
+        }
+    }
+
+    return implode("\n", $lines);
+}
+
 ahx_wp_main_display_admin_notices();
 
 // Änderungen auslesen
@@ -164,6 +311,8 @@ $prefill_version_bump = sanitize_key(wp_unslash($_GET['prefill_version_bump'] ??
 if (!in_array($prefill_version_bump, ['none', 'patch', 'minor', 'major'], true)) {
     $prefill_version_bump = 'none';
 }
+
+$open_issues_data = ahx_wp_github_repo_changes_fetch_open_issues($dir);
 
 // Mapping für Statuskürzel
 
@@ -395,6 +544,18 @@ if (isset($_POST['commit_action'])) {
         'allow_force_with_lease_on_rebase_conflict' => sanitize_text_field(wp_unslash($_POST['allow_force_with_lease_on_rebase_conflict'] ?? '')),
         'ajax' => $is_ajax ? '1' : '0',
     ];
+
+    $selected_issue_ids = wp_unslash($_POST['commit_issue_ids'] ?? []);
+    if (!is_array($selected_issue_ids)) {
+        $selected_issue_ids = [];
+    }
+    $close_selected_issues = sanitize_text_field(wp_unslash($_POST['commit_close_issues'] ?? '')) === '1';
+    $issue_footer = ahx_wp_github_repo_changes_build_issue_footer($selected_issue_ids, $close_selected_issues);
+    if ($issue_footer !== '') {
+        $base_message = trim((string)$post_data['commit_message']);
+        $post_data['commit_message'] = $base_message === '' ? $issue_footer : ($base_message . "\n\n" . $issue_footer);
+    }
+
     $result = ahx_wp_github_process_commit_request($dir, $post_data);
     $action = (string)$post_data['commit_action'];
     $action_label = ($action === 'commit_sync') ? 'Commit+Sync' : 'Commit';
@@ -511,6 +672,35 @@ if (isset($_POST['commit_action'])) {
             <?php wp_nonce_field('ahx_repo_commit_form', 'ahx_repo_commit_nonce'); ?>
             <label for="commit_message"><strong>Commit-Beschreibung:</strong></label><br>
             <textarea id="commit_message" name="commit_message" rows="3" style="width:100%;max-width:600px;"><?php echo esc_textarea($prefill_commit_message); ?></textarea><br>
+            <?php if (!empty($open_issues_data['enabled'])): ?>
+                <fieldset style="margin:12px 0; max-width:900px;">
+                    <legend><strong>Offene Issues referenzieren</strong></legend>
+                    <?php if (!empty($open_issues_data['error'])): ?>
+                        <p style="color:#b32d2e;margin:0 0 8px 0;"><?php echo esc_html((string)$open_issues_data['error']); ?></p>
+                    <?php elseif (!empty($open_issues_data['items'])): ?>
+                        <p style="margin:0 0 8px 0;color:#50575e;">Wählen Sie die Issues, die im Commit referenziert werden sollen.</p>
+                        <div style="max-height:220px;overflow:auto;border:1px solid #dcdcde;padding:8px;background:#fff;">
+                            <?php foreach ($open_issues_data['items'] as $issue): ?>
+                                <label style="display:block;margin:4px 0;">
+                                    <input type="checkbox" name="commit_issue_ids[]" value="<?php echo intval($issue['number']); ?>">
+                                    <strong>#<?php echo intval($issue['number']); ?></strong>
+                                    <a href="<?php echo esc_url((string)$issue['html_url']); ?>" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">
+                                        <?php echo esc_html((string)$issue['title']); ?>
+                                    </a>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                        <p style="margin:8px 0 0 0;">
+                            <label style="display:inline-flex;align-items:center;gap:6px;">
+                                <input type="checkbox" name="commit_close_issues" value="1">
+                                Gewählte Issues im Commit als erledigt markieren (Closes #...)
+                            </label>
+                        </p>
+                    <?php else: ?>
+                        <p style="margin:0;color:#50575e;">Keine offenen Issues gefunden.</p>
+                    <?php endif; ?>
+                </fieldset>
+            <?php endif; ?>
             <fieldset style="margin:12px 0;">
                 <legend><strong>Versionssprung:</strong></legend>
                 <label><input type="radio" name="version_bump" value="none" <?php checked($prefill_version_bump, 'none'); ?>> Kein Versionssprung (<?php echo esc_html($header_version_disp); ?>)</label>
