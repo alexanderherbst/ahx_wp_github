@@ -288,7 +288,7 @@ if (isset($_POST['ahx_github_dir_submit'])) {
     if (!isset($_POST['ahx_github_dir_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['ahx_github_dir_nonce'])), 'ahx_github_dir_submit')) {
         echo '<div class="error"><p>Ungültiger Nonce.</p></div>';
     } else {
-        $dir = sanitize_text_field(wp_unslash($_POST['ahx_github_dir'] ?? ''));
+        $dir = ahx_wp_github_normalize_dir_path(sanitize_text_field(wp_unslash($_POST['ahx_github_dir'] ?? '')));
         if ($dir && is_dir($dir)) {
         global $wpdb;
         $table = $wpdb->prefix . 'ahx_wp_github';
@@ -306,8 +306,17 @@ if (isset($_POST['ahx_github_dir_submit'])) {
                 $type = 'template';
             }
         }
-        // Prüfen, ob Verzeichnis schon existiert
-        $exists = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table WHERE dir_path = %s", $dir));
+        // Prüfen, ob Verzeichnis schon existiert, auch wenn ältere Datensätze andere Slash-Maskierung verwenden
+        $exists = false;
+        $existing_paths = $wpdb->get_col("SELECT dir_path FROM $table");
+        if (is_array($existing_paths)) {
+            foreach ($existing_paths as $existing_path) {
+                if (ahx_wp_github_dir_paths_match($existing_path, $dir)) {
+                    $exists = true;
+                    break;
+                }
+            }
+        }
             if (!$exists) {
                 // Prüfen, ob .git existiert, sonst initialisieren
                 if (!is_dir($dir . DIRECTORY_SEPARATOR . '.git')) {
@@ -441,7 +450,7 @@ ahx_wp_main_display_admin_notices();
                 echo '<td>' . esc_html($row->name) . '</td>';
                 echo '<td>' . esc_html($row->type) . '</td>';
                 echo '<td>' . esc_html($repo_version) . '</td>';
-                $display_dir_path = str_replace(array('/', '\\'), DIRECTORY_SEPARATOR, (string) $row->dir_path);
+                $display_dir_path = ahx_wp_github_format_dir_path_for_display($row->dir_path);
                 echo '<td>' . esc_html($display_dir_path) . '</td>';
                 echo '<td>' . esc_html($row->created_at) . '</td>';
                 echo '<td>' . $btn_changes . '</td>';

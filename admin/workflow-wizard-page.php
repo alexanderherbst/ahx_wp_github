@@ -327,7 +327,7 @@ $progress_percent = (int) round(($completed_steps / 4) * 100);
                         <option value="">Bitte auswählen</option>
                         <?php foreach ($repos as $r): ?>
                             <option value="<?php echo intval($r->id); ?>" <?php selected($selected_repo_id, intval($r->id)); ?>>
-                                <?php echo esc_html($r->name . ' — ' . $r->dir_path); ?>
+                                <?php echo esc_html($r->name . ' — ' . ahx_wp_github_format_dir_path_for_display($r->dir_path)); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -436,7 +436,7 @@ $progress_percent = (int) round(($completed_steps / 4) * 100);
             <tbody>
                 <tr>
                     <th style="width:220px;">Verzeichnis</th>
-                    <td><?php echo esc_html($repo->dir_path); ?></td>
+                    <td><?php echo esc_html(ahx_wp_github_format_dir_path_for_display($repo->dir_path)); ?></td>
                 </tr>
                 <tr>
                     <th>Aktueller Branch</th>

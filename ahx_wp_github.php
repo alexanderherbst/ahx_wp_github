@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.11.6
+Version: v1.11.7
 Author: AHX
 Email: ahx@familie-herbst.net
 */
@@ -287,6 +287,13 @@ function ahx_wp_github_normalize_dir_path($path) {
     }
 
     $path = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
+    $separator_pattern = '/' . preg_quote(DIRECTORY_SEPARATOR, '/') . '{2,}/';
+    $had_unc_prefix = preg_match('/^' . preg_quote(DIRECTORY_SEPARATOR, '/') . '{2}/', $path) === 1;
+    $path = preg_replace($separator_pattern, DIRECTORY_SEPARATOR, $path);
+    if ($had_unc_prefix) {
+        $path = DIRECTORY_SEPARATOR . $path;
+    }
+
     if (preg_match('/^[A-Za-z]:' . preg_quote(DIRECTORY_SEPARATOR, '/') . '$/', $path)) {
         return strtoupper(substr($path, 0, 1)) . ':' . DIRECTORY_SEPARATOR;
     }
@@ -297,6 +304,14 @@ function ahx_wp_github_normalize_dir_path($path) {
     }
 
     return $normalized;
+}
+
+function ahx_wp_github_format_dir_path_for_display($path) {
+    return ahx_wp_github_normalize_dir_path($path);
+}
+
+function ahx_wp_github_dir_paths_match($left, $right) {
+    return ahx_wp_github_normalize_dir_path($left) === ahx_wp_github_normalize_dir_path($right);
 }
 
 function ahx_wp_github_get_browse_roots() {

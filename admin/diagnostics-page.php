@@ -209,7 +209,7 @@ if (isset($_POST['ahx_run_diagnostics'])) {
             <option value="">Bitte auswählen</option>
             <?php foreach ($repos as $repo): ?>
                 <option value="<?php echo intval($repo->id); ?>" <?php selected($selected_repo_id, intval($repo->id)); ?>>
-                    <?php echo esc_html($repo->name . ' — ' . $repo->dir_path); ?>
+                    <?php echo esc_html($repo->name . ' — ' . ahx_wp_github_format_dir_path_for_display($repo->dir_path)); ?>
                 </option>
             <?php endforeach; ?>
         </select>
