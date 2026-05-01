@@ -542,19 +542,27 @@ foreach ($files as &$f) {
 unset($f);
 
 // Bestimme Haupt-Plugin-Datei und Versionen für das Commit-Formular
-$main_plugin_file = '';
-foreach ($files as $f) {
-    if (preg_match('/^([^\/]+)\.php$/i', $f['file'], $mm)) { $main_plugin_file = $f['file']; break; }
+$version_detection = function_exists('ahx_wp_github_detect_main_file_and_version')
+    ? ahx_wp_github_detect_main_file_and_version($dir, $files)
+    : ['main_plugin_file' => '', 'main_plugin_path' => '', 'base_version' => '1.0.0'];
+
+$main_plugin_file = (string)($version_detection['main_plugin_file'] ?? '');
+if ($main_plugin_file === '') {
+    $plugin_dir = basename($dir);
+    $main_plugin_file = $plugin_dir . '.php';
 }
-if (!$main_plugin_file) { $plugin_dir = basename($dir); $main_plugin_file = $plugin_dir . '.php'; }
-$main_plugin_path = $dir . DIRECTORY_SEPARATOR . $main_plugin_file;
-$header_version = '';
-if (file_exists($main_plugin_path)) {
-    $header = file_get_contents($main_plugin_path);
-    if (preg_match('/Version:\s*v?(\d+\.\d+\.\d+)/mi', $header, $m2)) { $header_version = $m2[1]; }
+
+$main_plugin_path = (string)($version_detection['main_plugin_path'] ?? '');
+if ($main_plugin_path === '') {
+    $main_plugin_path = $dir . DIRECTORY_SEPARATOR . $main_plugin_file;
 }
-if (!$header_version) $header_version = '1.0.0';
-list($major, $minor, $patch) = explode('.', $header_version);
+
+$header_version = (string)($version_detection['base_version'] ?? '1.0.0');
+if (!preg_match('/^\d+\.\d+\.\d+$/', $header_version)) {
+    $header_version = '1.0.0';
+}
+
+list($major, $minor, $patch) = array_pad(explode('.', $header_version), 3, 0);
 $v_patch = 'v' . $major . '.' . $minor . '.' . ((int)$patch + 1);
 $v_minor = 'v' . $major . '.' . ((int)$minor + 1) . '.0';
 $v_major = 'v' . ((int)$major + 1) . '.0.0';

@@ -417,6 +417,168 @@ function ahx_wp_github_compare_version_tags($tag_a, $tag_b) {
     return 0;
 }
 
+function ahx_wp_github_extract_semver_from_text($text) {
+    $text = is_string($text) ? $text : '';
+    if ($text === '') {
+        return '';
+    }
+
+    if (preg_match('/^\s*(?:\*+\s*)?(?:\*\*)?Version(?:\*\*)?\s*:\s*v?(\d+\.\d+\.\d+)/mi', $text, $m)) {
+        return $m[1];
+    }
+
+    return '';
+}
+
+function ahx_wp_github_detect_main_file_and_version($dir, $changed_files = []) {
+    $result = [
+        'main_plugin_file' => '',
+        'main_plugin_path' => '',
+        'base_version' => '1.0.0',
+        'source' => 'default',
+    ];
+
+    $dir = rtrim((string)$dir, DIRECTORY_SEPARATOR);
+    if ($dir === '' || !is_dir($dir)) {
+        return $result;
+    }
+
+    $entries = @scandir($dir);
+    $root_php_files = [];
+    $readme_path = '';
+    if (is_array($entries)) {
+        foreach ($entries as $entry) {
+            if (!is_string($entry) || $entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $abs = $dir . DIRECTORY_SEPARATOR . $entry;
+            if (!is_file($abs)) {
+                continue;
+            }
+
+            if (preg_match('/\.php$/i', $entry)) {
+                $root_php_files[] = $entry;
+            }
+
+            if ($readme_path === '' && strtolower($entry) === 'readme.md') {
+                $readme_path = $abs;
+            }
+        }
+    }
+
+    sort($root_php_files, SORT_NATURAL | SORT_FLAG_CASE);
+
+    $candidate_files = [];
+    foreach ((array)$changed_files as $changed_file_entry) {
+        $file = '';
+        if (is_array($changed_file_entry)) {
+            $file = (string)($changed_file_entry['file'] ?? '');
+        } elseif (is_string($changed_file_entry)) {
+            $file = $changed_file_entry;
+        }
+
+        if ($file !== '' && preg_match('/^([^\/]+)\.php$/i', $file)) {
+            $candidate_files[] = $file;
+        }
+    }
+
+    $preferred_file = basename($dir) . '.php';
+    $candidate_files[] = $preferred_file;
+    foreach ($root_php_files as $root_php_file) {
+        $candidate_files[] = $root_php_file;
+    }
+    $candidate_files = array_values(array_unique($candidate_files));
+
+    $main_plugin_file = '';
+    foreach ($candidate_files as $candidate_file) {
+        $candidate_path = $dir . DIRECTORY_SEPARATOR . $candidate_file;
+        if (!is_file($candidate_path) || !is_readable($candidate_path)) {
+            continue;
+        }
+
+        $contents = @file_get_contents($candidate_path);
+        if (!is_string($contents) || $contents === '') {
+            continue;
+        }
+
+        if (preg_match('/^\s*(?:\*+\s*)?Plugin Name\s*:/mi', $contents)) {
+            $main_plugin_file = $candidate_file;
+            break;
+        }
+    }
+
+    if ($main_plugin_file === '' && is_file($dir . DIRECTORY_SEPARATOR . $preferred_file)) {
+        $main_plugin_file = $preferred_file;
+    }
+    if ($main_plugin_file === '' && !empty($root_php_files)) {
+        $main_plugin_file = $root_php_files[0];
+    }
+
+    $main_plugin_path = ($main_plugin_file !== '') ? ($dir . DIRECTORY_SEPARATOR . $main_plugin_file) : '';
+    $result['main_plugin_file'] = $main_plugin_file;
+    $result['main_plugin_path'] = $main_plugin_path;
+
+    if ($main_plugin_path !== '' && is_readable($main_plugin_path)) {
+        $header = @file_get_contents($main_plugin_path);
+        $header_version = ahx_wp_github_extract_semver_from_text($header);
+        if ($header_version !== '') {
+            $result['base_version'] = $header_version;
+            $result['source'] = 'main_header';
+            return $result;
+        }
+    }
+
+    $version_txt = $dir . DIRECTORY_SEPARATOR . 'version.txt';
+    if (is_file($version_txt) && is_readable($version_txt)) {
+        $txt = @file_get_contents($version_txt);
+        $normalized_tag = ahx_wp_github_normalize_version_tag($txt);
+        if ($normalized_tag !== '') {
+            $result['base_version'] = substr($normalized_tag, 1);
+            $result['source'] = 'version_txt';
+            return $result;
+        }
+    }
+
+    $style_css = $dir . DIRECTORY_SEPARATOR . 'style.css';
+    if (is_file($style_css) && is_readable($style_css)) {
+        $style_contents = @file_get_contents($style_css);
+        $style_version = ahx_wp_github_extract_semver_from_text($style_contents);
+        if ($style_version !== '') {
+            $result['base_version'] = $style_version;
+            $result['source'] = 'style_header';
+            return $result;
+        }
+    }
+
+    if ($readme_path !== '' && is_readable($readme_path)) {
+        $readme_contents = @file_get_contents($readme_path);
+        $readme_version = ahx_wp_github_extract_semver_from_text($readme_contents);
+        if ($readme_version !== '') {
+            $result['base_version'] = $readme_version;
+            $result['source'] = 'readme';
+            return $result;
+        }
+    }
+
+    foreach ($root_php_files as $root_php_file) {
+        $root_php_path = $dir . DIRECTORY_SEPARATOR . $root_php_file;
+        if (!is_readable($root_php_path)) {
+            continue;
+        }
+
+        $root_php_contents = @file_get_contents($root_php_path);
+        $root_php_version = ahx_wp_github_extract_semver_from_text($root_php_contents);
+        if ($root_php_version !== '') {
+            $result['base_version'] = $root_php_version;
+            $result['source'] = 'root_php_header';
+            return $result;
+        }
+    }
+
+    return $result;
+}
+
 function ahx_wp_github_ensure_release_for_version($remote_url, $branch, $requested_version) {
     $result = [
         'success' => false,
@@ -686,16 +848,18 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
     }
 
     // Version bump
-    $main_plugin_file = '';
-    foreach ($files as $f) { if (preg_match('/^([^\/]+)\.php$/i', $f['file'], $mm)) { $main_plugin_file = $f['file']; break; } }
-    if (!$main_plugin_file) { $plugin_dir = basename($dir); $main_plugin_file = $plugin_dir . '.php'; }
-    $main_plugin_path = $dir . DIRECTORY_SEPARATOR . $main_plugin_file;
-    $header_version = '';
-    if (file_exists($main_plugin_path)) {
-        $header = file_get_contents($main_plugin_path);
-        if (preg_match('/Version:\s*v?(\d+\.\d+\.\d+)/mi', $header, $m2)) { $header_version = $m2[1]; }
+    $version_detection = ahx_wp_github_detect_main_file_and_version($dir, $files);
+    $main_plugin_file = (string)($version_detection['main_plugin_file'] ?? '');
+    $main_plugin_path = (string)($version_detection['main_plugin_path'] ?? '');
+    $header_version = (string)($version_detection['base_version'] ?? '1.0.0');
+    if (!preg_match('/^\d+\.\d+\.\d+$/', $header_version)) {
+        $header_version = '1.0.0';
     }
-    if (!$header_version) $header_version = '1.0.0';
+    ahx_wp_github_safe_log(
+        'DEBUG',
+        'version bump source=' . (string)($version_detection['source'] ?? 'unknown') . ' main=' . $main_plugin_file . ' base=' . $header_version,
+        'ahx_wp_github'
+    );
     list($major, $minor, $patch) = array_pad(explode('.', $header_version), 3, 0);
     $v_patch = 'v' . $major . '.' . $minor . '.' . ((int)$patch + 1);
     $v_minor = 'v' . $major . '.' . ((int)$minor + 1) . '.0';
@@ -705,7 +869,7 @@ function ahx_wp_github_process_commit_request($dir, $post_data) {
     if ($bump === 'patch') $new_version = $v_patch;
     elseif ($bump === 'minor') $new_version = $v_minor;
     elseif ($bump === 'major') $new_version = $v_major;
-    if (file_exists($main_plugin_path)) {
+    if ($main_plugin_path !== '' && file_exists($main_plugin_path)) {
         $main_file_contents = file_get_contents($main_plugin_path);
         $main_file_contents = preg_replace('/(Version:\s*)v?(\d+\.\d+\.\d+)/i', '$1' . $new_version, $main_file_contents, 1);
         $main_file_contents = preg_replace(

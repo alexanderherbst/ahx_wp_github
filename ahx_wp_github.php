@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.12.0
+Version: v1.12.1
 Author: AHX
 Email: ahx@familie-herbst.net
 */
