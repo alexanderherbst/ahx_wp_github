@@ -394,13 +394,11 @@ foreach ($files as &$f) {
     $status = trim($f['status']);
     $f['status_class'] = $status_classes[$status] ?? '';
     $f['diff_html'] = '';
+    $f['added_lines'] = 0;
+    $f['removed_lines'] = 0;
     // Handle empty dirs / added files quickly
     if (!empty($f['is_empty_dir'])) {
         $f['diff_html'] = '<em>Leeres Verzeichnis</em>';
-        continue;
-    }
-    if ($status === 'A') {
-        $f['diff_html'] = '<em>Datei wurde neu hinzugefügt. Kein Diff verfügbar.</em>';
         continue;
     }
 
@@ -477,8 +475,8 @@ foreach ($files as &$f) {
             $currentHunk[] = ['raw' => $line, 'old' => $oldLine, 'new' => $newLine];
             if (strlen($line) > 0) {
                 if ($line[0] === ' ') { $oldLine++; $newLine++; }
-                elseif ($line[0] === '+') { $newLine++; }
-                elseif ($line[0] === '-') { $oldLine++; }
+                elseif ($line[0] === '+') { $newLine++; $f['added_lines']++; }
+                elseif ($line[0] === '-') { $oldLine++; $f['removed_lines']++; }
             }
             if ($i+1 >= count($lines) || (isset($lines[$i+1][0]) && $lines[$i+1][0] === '@')) {
                 $hunks[] = $currentHunk;
@@ -639,7 +637,9 @@ if (isset($_POST['commit_action'])) {
                     : ('Release bereits vorhanden: ' . $result['release_version']);
                 ahx_wp_main_add_notice(esc_html($release_notice), 'success');
             }
-            if (!empty($result['push_output'])) ahx_wp_main_add_notice('Push-Ausgabe (gekürzt): ' . esc_html(substr($result['push_output'],0,400)), 'info');
+            if (!empty($result['push_output'])) {
+                ahx_wp_main_add_notice('Push-Ausgabe (gekürzt): ' . esc_html(substr($result['push_output'], 0, 400)), 'info');
+            }
         } else {
             $error_msg = trim((string)($result['message'] ?? ''));
             if ($error_msg === '') {
@@ -715,21 +715,66 @@ if (isset($_POST['commit_action'])) {
             <div class="item"><code>...</code><span style="color:#333;">Kombinationen: Index/Arbeitsverzeichnis, z.B. "AM" = Added+Modified</span></div>
         </div>
         <h2>Geänderte Dateien</h2>
+        <style>
+        .ahx-file-diff details {
+            border: 1px solid #dcdcde;
+            border-radius: 4px;
+            background: #fff;
+            margin: 0 0 10px 0;
+        }
+        .ahx-file-diff-controls {
+            margin: 0 0 10px;
+            display: flex;
+            gap: 8px;
+        }
+        .ahx-file-diff summary {
+            cursor: pointer;
+            padding: 8px 10px;
+            font-weight: 600;
+            user-select: none;
+        }
+        .ahx-file-diff summary code {
+            margin-right: 8px;
+        }
+        .ahx-diff-lines-added {
+            color: #0a7f2e;
+            font-weight: 700;
+            margin-left: 10px;
+        }
+        .ahx-diff-lines-removed {
+            color: #b32d2e;
+            font-weight: 700;
+            margin-left: 8px;
+        }
+        .ahx-file-diff-body {
+            padding: 0 10px 10px;
+        }
+        </style>
+        <div class="ahx-file-diff-controls">
+            <button type="button" id="ahx-expand-all-diffs" class="button">Alle aufklappen</button>
+            <button type="button" id="ahx-collapse-all-diffs" class="button">Alle einklappen</button>
+        </div>
+        <div class="ahx-file-diff">
         <?php
         if (empty($files)) {
             echo '<p>Keine geänderten Dateien erkannt.</p>';
         } else {
             foreach ($files as $f) {
                 $class = $f['status_class'] ?? '';
+                $summary = '<code class="' . esc_attr($class) . '">' . esc_html($f['status']) . '</code> ' . esc_html($f['file']);
+                $summary .= '<span class="ahx-diff-lines-added">+' . intval($f['added_lines'] ?? 0) . '</span>';
+                $summary .= '<span class="ahx-diff-lines-removed">-' . intval($f['removed_lines'] ?? 0) . '</span>';
                 if (!empty($f['is_empty_dir'])) {
-                    echo '<h3><code class="' . $class . '">' . esc_html($f['status']) . '</code> ' . esc_html($f['file']) . ' <span style="color:#888">(leeres Verzeichnis)</span></h3>';
-                } else {
-                    echo '<h3><code class="' . $class . '">' . esc_html($f['status']) . '</code> ' . esc_html($f['file']) . '</h3>';
+                    $summary .= ' <span style="color:#888">(leeres Verzeichnis)</span>';
                 }
-                echo $f['diff_html'];
+                echo '<details class="ahx-file-diff-item">';
+                echo '<summary>' . $summary . '</summary>';
+                echo '<div class="ahx-file-diff-body">' . $f['diff_html'] . '</div>';
+                echo '</details>';
             }
         }
         ?>
+        </div>
     <?php else: ?>
         <p>Keine Änderungen vorhanden.</p>
     <?php endif; ?>
@@ -958,6 +1003,37 @@ if (isset($_POST['commit_action'])) {
     });
 
     renderPreview();
+})();
+</script>
+<script>
+(function() {
+    var expandBtn = document.getElementById('ahx-expand-all-diffs');
+    var collapseBtn = document.getElementById('ahx-collapse-all-diffs');
+    if (!expandBtn && !collapseBtn) {
+        return;
+    }
+
+    function getDiffItems() {
+        return document.querySelectorAll('.ahx-file-diff-item');
+    }
+
+    if (expandBtn) {
+        expandBtn.addEventListener('click', function() {
+            var items = getDiffItems();
+            for (var i = 0; i < items.length; i++) {
+                items[i].open = true;
+            }
+        });
+    }
+
+    if (collapseBtn) {
+        collapseBtn.addEventListener('click', function() {
+            var items = getDiffItems();
+            for (var i = 0; i < items.length; i++) {
+                items[i].open = false;
+            }
+        });
+    }
 })();
 </script>
 <?php endif; ?>
