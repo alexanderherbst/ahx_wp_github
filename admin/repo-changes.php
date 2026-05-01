@@ -716,7 +716,7 @@ if (isset($_POST['commit_action'])) {
         </div>
         <h2>Geänderte Dateien</h2>
         <style>
-        .ahx-file-diff details {
+        .ahx-file-diff details  {
             border: 1px solid #dcdcde;
             border-radius: 4px;
             background: #fff;
