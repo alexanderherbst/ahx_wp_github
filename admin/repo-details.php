@@ -277,7 +277,7 @@ if (isset($_POST['ahx_repo_settings_submit']) && current_user_can('manage_option
         }
     }
 
-    $redirect_url = admin_url('admin.php?page=ahx-wp-github&repo_details=1&dir=' . urlencode($dir));
+    $redirect_url = admin_url('admin.php?page=ahx-wp-github-repos&repo_details=1&dir=' . urlencode($dir));
     if (!headers_sent()) {
         wp_safe_redirect($redirect_url);
         exit;
@@ -341,7 +341,7 @@ if (isset($_POST['ahx_repo_branch_action_submit']) && current_user_can('manage_o
         }
     }
 
-    $redirect_url = admin_url('admin.php?page=ahx-wp-github&repo_details=1&dir=' . urlencode($dir));
+    $redirect_url = admin_url('admin.php?page=ahx-wp-github-repos&repo_details=1&dir=' . urlencode($dir));
     if (!headers_sent()) {
         wp_safe_redirect($redirect_url);
         exit;
@@ -448,7 +448,7 @@ if ($has_git_repo) {
     }
 }
 
-$back_url = admin_url('admin.php?page=ahx-wp-github');
+$back_url = admin_url('admin.php?page=ahx-wp-github-repos');
 ?>
 <div class="wrap">
     <h1>Repository-Details</h1>

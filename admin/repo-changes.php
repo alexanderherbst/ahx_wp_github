@@ -369,7 +369,7 @@ foreach ($empty_dirs as $empty_dir_rel) {
 }
 
 $has_changes = !empty($files);
-$back_url = admin_url('admin.php?page=ahx-wp-github');
+$back_url = admin_url('admin.php?page=ahx-wp-github-repos');
 
 $prefill_commit_message = sanitize_textarea_field(wp_unslash($_GET['prefill_commit_message'] ?? ''));
 $prefill_version_bump = sanitize_key(wp_unslash($_GET['prefill_version_bump'] ?? 'none'));
@@ -598,7 +598,7 @@ if (isset($_POST['commit_action'])) {
         $error_message = 'Ungültiger Nonce.';
         if (!$is_ajax) {
             ahx_wp_main_add_notice($error_message, 'error');
-            $admin_url = admin_url('admin.php?page=ahx-wp-github');
+            $admin_url = admin_url('admin.php?page=ahx-wp-github-repos');
             if (!headers_sent()) { header('Location: ' . $admin_url); exit; }
             else { echo '<script>window.location.href = ' . wp_json_encode($admin_url) . ';</script>'; exit; }
         }
@@ -676,7 +676,7 @@ if (isset($_POST['commit_action'])) {
                 ahx_wp_main_add_notice($action_label . ' fehlgeschlagen: ' . esc_html(mb_substr($error_msg, 0, 500)), 'error');
             }
         }
-        $admin_url = admin_url('admin.php?page=ahx-wp-github');
+        $admin_url = admin_url('admin.php?page=ahx-wp-github-repos');
         if (!headers_sent()) { header('Location: ' . $admin_url); exit; }
         else { echo '<script>window.location.href = ' . wp_json_encode($admin_url) . ';</script>'; exit; }
     }

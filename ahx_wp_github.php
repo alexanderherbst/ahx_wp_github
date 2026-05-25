@@ -2,7 +2,7 @@
 /*
 Plugin Name: AHX WP GitHub
 Description: Plugin zum Erfassen von Verzeichnissen, Initialisieren als GitHub-Repository und Listen der Einträge.
-Version: v1.12.1
+Version: v1.13.0
 Author: AHX
 Email: ahx@familie-herbst.net
 */
@@ -58,35 +58,35 @@ function ahx_wp_github_admin_menu() {
     if (empty($columns_safe)) {
         $wpdb->query("ALTER TABLE $table ADD COLUMN safe_directory tinyint(1) NOT NULL DEFAULT 0 AFTER type");
     }
-    // Top-level menu placed directly after AHX Main (AHX Main uses position 2)
+    // Top-level menu – Landing page
     add_menu_page(
-        'AHX WP GitHub',            // page title
-        'AHX WP GitHub',            // menu title
-        'manage_options',           // capability
-        'ahx-wp-github',            // menu slug
-        'ahx_wp_github_admin_page', // callback
-        'dashicons-admin-site',     // icon
-        3                           // position directly after AHX Main (2)
+        'AHX WP GitHub',                   // page title
+        'AHX WP GitHub',                   // menu title
+        'manage_options',                  // capability
+        'ahx-wp-github',                   // menu slug
+        'ahx_wp_github_landing_page',      // callback
+        'dashicons-admin-site',            // icon
+        3                                  // position
     );
 
-    // Submenu: Overview (links back to the top-level page)
+    // Submenu: Übersicht (links back to landing)
     add_submenu_page(
         'ahx-wp-github',
         'AHX WP GitHub',
         'Übersicht',
         'manage_options',
         'ahx-wp-github',
-        'ahx_wp_github_admin_page'
+        'ahx_wp_github_landing_page'
     );
 
-    // Submenu: Settings
+    // Submenu: Repositories (former main admin page)
     add_submenu_page(
         'ahx-wp-github',
-        'AHX WP GitHub Einstellungen',
-        'Einstellungen',
+        'AHX WP GitHub – Repositories',
+        'Repositories',
         'manage_options',
-        'ahx-wp-github-config',
-        'ahx_wp_github_settings_page'
+        'ahx-wp-github-repos',
+        'ahx_wp_github_repos_page'
     );
 
     // Submenu: Diagnose
@@ -109,16 +109,28 @@ function ahx_wp_github_admin_menu() {
         'ahx_wp_github_workflow_wizard_page'
     );
 
+    // Settings under WordPress Settings menu
+    add_options_page(
+        'AHX WP GitHub Einstellungen',
+        'AHX WP GitHub',
+        'manage_options',
+        'ahx-wp-github-settings',
+        'ahx_wp_github_settings_options_page'
+    );
+
 }
 
 // Ensure settings are registered during admin_init (needed for options.php save requests)
 require_once plugin_dir_path(__FILE__) . 'admin/settings.php';
 
-// Admin-Seite anzeigen
-function ahx_wp_github_admin_page() {
+// Page callbacks
+function ahx_wp_github_landing_page() {
+    require_once plugin_dir_path(__FILE__) . 'admin/landing-page.php';
+}
+function ahx_wp_github_repos_page() {
     require_once plugin_dir_path(__FILE__) . 'admin/admin-page.php';
 }
-function ahx_wp_github_settings_page() {
+function ahx_wp_github_settings_options_page() {
     require_once plugin_dir_path(__FILE__) . 'admin/config-page.php';
 }
 function ahx_wp_github_diagnostics_page() {
@@ -538,7 +550,7 @@ function ahx_wp_github_ajax_repo_row_status() {
     }
 
     $state = ahx_wp_github_get_repo_status_data($repo->id, $repo->dir_path);
-    $changes_url = admin_url('admin.php?page=ahx-wp-github&repo_changes=1&dir=' . urlencode($repo->dir_path));
+    $changes_url = admin_url('admin.php?page=ahx-wp-github-repos&repo_changes=1&dir=' . urlencode($repo->dir_path));
     $html = '';
 
     if (($state['state'] ?? 'none') === 'changes') {

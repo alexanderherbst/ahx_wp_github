@@ -13,14 +13,12 @@ function ahx_wp_github_register_settings() {
 
     ahx_wp_github_safe_log('DEBUG', 'Aufruf: ' . __METHOD__ . '(' . implode(', ', array_map(fn($a) => preg_replace('/\s+/', ' ', trim(var_export($a, true))), func_get_args())) . ')');
 
-    add_settings_section('ahx_wp_github_logging', 'Logging', null, 'ahx_wp_github_settings');
+    // Settings page under WordPress › Einstellungen
+    add_settings_section('ahx_wp_github_logging', 'Logging & Timeouts', null, 'ahx_wp_github_settings');
+    add_settings_section('ahx_wp_github_push',    'Push-Einstellungen',  null, 'ahx_wp_github_settings');
     
     add_settings_field( 'ahx_wp_github_level_of_logging', 'Log-Level', 'ahx_wp_github_level_of_logging_select', 'ahx_wp_github_settings', 'ahx_wp_github_logging');
     register_setting('ahx_wp_github_settings_group', 'ahx_wp_github_level_of_logging');
-    
-    // Push preferences
-    add_settings_field('ahx_wp_github_prefer_api', 'Push via GitHub API bevorzugen', 'ahx_wp_github_prefer_api_checkbox', 'ahx_wp_github_settings', 'ahx_wp_github_logging');
-    register_setting('ahx_wp_github_settings_group', 'ahx_wp_github_prefer_api');
 
     // Git command timeout for diagnostics and guarded git calls
     add_settings_field('ahx_wp_github_git_timeout_seconds', 'Git Timeout (Sekunden)', 'ahx_wp_github_git_timeout_seconds_input', 'ahx_wp_github_settings', 'ahx_wp_github_logging');
@@ -30,8 +28,12 @@ function ahx_wp_github_register_settings() {
         'default' => 15,
     ]);
 
+    // Push preferences
+    add_settings_field('ahx_wp_github_prefer_api', 'Push via GitHub API bevorzugen', 'ahx_wp_github_prefer_api_checkbox', 'ahx_wp_github_settings', 'ahx_wp_github_push');
+    register_setting('ahx_wp_github_settings_group', 'ahx_wp_github_prefer_api');
+
     // Remote URL policy
-    add_settings_field('ahx_wp_github_remote_policy', 'Erlaubte Remote-URLs', 'ahx_wp_github_remote_policy_select', 'ahx_wp_github_settings', 'ahx_wp_github_logging');
+    add_settings_field('ahx_wp_github_remote_policy', 'Erlaubte Remote-URLs', 'ahx_wp_github_remote_policy_select', 'ahx_wp_github_settings', 'ahx_wp_github_push');
     register_setting('ahx_wp_github_settings_group', 'ahx_wp_github_remote_policy', [
         'type' => 'string',
         'sanitize_callback' => 'ahx_wp_github_sanitize_remote_policy',

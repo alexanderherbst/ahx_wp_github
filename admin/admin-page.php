@@ -433,7 +433,7 @@ ahx_wp_main_display_admin_notices();
         $rows = $wpdb->get_results("SELECT * FROM $table");
         if ($rows) {
             foreach ($rows as $row) {
-                $details_url = admin_url('admin.php?page=ahx-wp-github&repo_details=1&dir=' . urlencode($row->dir_path));
+                $details_url = admin_url('admin.php?page=ahx-wp-github-repos&repo_details=1&dir=' . urlencode($row->dir_path));
                 $repo_version = ahx_wp_github_admin_get_repo_version($row->dir_path, $row->name);
                 $git_dir = $row->dir_path . DIRECTORY_SEPARATOR . '.git';
 
