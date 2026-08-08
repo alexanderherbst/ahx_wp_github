@@ -448,10 +448,25 @@ if ($has_git_repo) {
     }
 }
 
-$back_url = admin_url('admin.php?page=ahx-wp-github-repos');
+$back_url    = admin_url('admin.php?page=ahx-wp-github-repos');
+$changes_url = admin_url('admin.php?page=ahx-wp-github-repos&repo_changes=1&dir=' . urlencode($dir));
+
+// Schnelle Änderungsprüfung (nur wenn Git-Repo vorhanden)
+$has_local_changes = false;
+if ($has_git_repo && $git_bin !== '') {
+    $status_res = ahx_run_git_cmd($git_bin, $dir, 'status --porcelain', 10, false);
+    if (intval($status_res['exit'] ?? 1) === 0) {
+        $has_local_changes = trim((string)($status_res['output'] ?? '')) !== '';
+    }
+}
 ?>
 <div class="wrap">
-    <h1>Repository-Details</h1>
+    <h1>
+        Repository-Details
+        <?php if ($has_local_changes): ?>
+            <a href="<?php echo esc_url($changes_url); ?>" class="page-title-action">Änderungen ansehen</a>
+        <?php endif; ?>
+    </h1>
     <p><strong>Verzeichnis:</strong> <?php echo preg_replace('/[\\\\\/]+/', '/', $dir); ?></p>
 
     <?php if ($repo_row): ?>
